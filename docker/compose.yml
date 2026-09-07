@@ -12,3 +12,4 @@ services:
     volumes:
       - ../.env:/app/.env:ro
       - ../deployments:/app/deployments
+      - ../scripts:/app/scripts

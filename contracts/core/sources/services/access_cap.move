@@ -78,7 +78,7 @@ public fun caller_requirement(): Requirement {
 }
 
 public fun verify(request: &mut Request, cap: &AccessCap) {
-    assert!(cap.version == VERSION, EWrongVersion);
+    cap.assert_valid();
     let (_requirement, frame) = request.take_next(permit());
     assert!(request.entity_id() == option::some(cap.entity), ENotOwner);
     request.set_authorized_id(cap.entity);
@@ -88,7 +88,7 @@ public fun verify(request: &mut Request, cap: &AccessCap) {
 /// Satisfy the next (caller) requirement with any valid cap, recording
 /// `cap.entity()` as the request's authorized entity for downstream routing.
 public fun verify_caller(request: &mut Request, cap: &AccessCap) {
-    assert!(cap.version == VERSION, EWrongVersion);
+    cap.assert_valid();
     let (_requirement, frame) = request.take_next(caller_permit());
     request.set_authorized_id(cap.entity);
     frame.destroy_empty_frame();
@@ -137,6 +137,12 @@ public fun transfer_with_receipt(cap: AccessCap, receipt: ReturnReceipt, new_own
 
 // === View Functions ===
 
+/// Validate the capability version before using its entity as an authenticated
+/// caller in a module-authored operation.
+public fun assert_valid(cap: &AccessCap) {
+    assert!(cap.version == VERSION, EWrongVersion);
+}
+
 public fun version(cap: &AccessCap): u64 {
     cap.version
 }
@@ -166,4 +172,11 @@ fun permit(): Permit<Owner> {
 
 fun caller_permit(): Permit<Caller> {
     internal::permit<Caller>()
+}
+
+// === Test Functions ===
+
+#[test_only]
+public fun set_version_for_testing(cap: &mut AccessCap, version: u64) {
+    cap.version = version;
 }

@@ -20,8 +20,12 @@ export {
   adminAcl,
   EVE_CURRENCY,
   eveCurrency,
+  ITEM_TYPE_REGISTRY,
+  itemTypeRegistry,
   OBJECT_REGISTRY,
   objectRegistry,
+  RECIPE_REGISTRY,
+  recipeRegistry,
   requireSharedObject,
 } from './config/shared-objects.js'
 export type {
@@ -73,6 +77,9 @@ export {
   installGenericModule,
   uninstallGenericModule,
 } from './packages/generic-module.js'
+export * from './packages/industry.js'
+export * from './packages/industry-quote.js'
+export * from './packages/industry-read.js'
 export {
   type BalanceOfArgs,
   type BridgeInArgs,
@@ -93,6 +100,7 @@ export {
   withdraw,
   withdrawRequirement,
 } from './packages/inventory.js'
+export * from './packages/inventory-v2.js'
 export {
   editMetadata,
   editRequirement,

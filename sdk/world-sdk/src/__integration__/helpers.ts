@@ -31,7 +31,13 @@ export function loadLocalnetWorld(): {
   client: WorldClient
 } {
   const config = loadWorldConfig(LOCALNET_MANIFEST)
-  return { config, client: createWorldClient({ config }) }
+  return {
+    config,
+    client: createWorldClient({
+      config,
+      grpcUrl: process.env.SUI_GRPC_URL ?? process.env.SUI_RPC_URL,
+    }),
+  }
 }
 
 /** Sign, execute, assert success, and wait for the transaction to settle. */

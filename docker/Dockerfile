@@ -1,11 +1,11 @@
-ARG SUI_VERSION=testnet-v1.75.1
-ARG PNPM_VERSION=9
-FROM mysten/sui-tools:${SUI_VERSION} AS dependency-stage
+ARG SUI_VERSION=testnet-v1.79.0
+ARG PNPM_VERSION=12
+FROM mysten/sui-tools:ci AS dependency-stage
 
 # Install system dependencies, Node.js, and pnpm in a single layer
-RUN apt-get update && apt-get install -y --no-install-recommends jq curl \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y jq curl \
     && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get install -y --fix-missing nodejs \
     && npm install -g "pnpm@${PNPM_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 

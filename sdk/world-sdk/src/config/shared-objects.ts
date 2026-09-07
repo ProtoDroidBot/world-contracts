@@ -6,6 +6,9 @@ import type { SharedObjectRef, WorldConfig } from './types.js'
 export const OBJECT_REGISTRY = 'objectRegistry'
 export const ADMIN_ACL = 'adminAcl'
 export const EVE_CURRENCY = 'eveCurrency'
+// Explicit bootstrap catalogs, optionally scoped by tenant in the manifest.
+export const ITEM_TYPE_REGISTRY = 'itemTypeRegistry'
+export const RECIPE_REGISTRY = 'recipeRegistry'
 
 /** Validate that an unknown value is a complete `SharedObjectRef`. */
 export function parseSharedObjectRef(
@@ -38,4 +41,24 @@ export function adminAcl(config: WorldConfig): SharedObjectRef {
 
 export function eveCurrency(config: WorldConfig): SharedObjectRef {
   return requireSharedObject(config, EVE_CURRENCY)
+}
+
+export function itemTypeRegistry(
+  config: WorldConfig,
+  tenant?: string,
+): SharedObjectRef {
+  return requireSharedObject(
+    config,
+    tenant ? `${ITEM_TYPE_REGISTRY}:${tenant}` : ITEM_TYPE_REGISTRY,
+  )
+}
+
+export function recipeRegistry(
+  config: WorldConfig,
+  tenant?: string,
+): SharedObjectRef {
+  return requireSharedObject(
+    config,
+    tenant ? `${RECIPE_REGISTRY}:${tenant}` : RECIPE_REGISTRY,
+  )
 }

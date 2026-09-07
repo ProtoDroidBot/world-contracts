@@ -18,9 +18,10 @@ use core::{
     location_service,
     mod::{Self, Module},
     object_registry::ObjectRegistry,
-    request::{Self, Request}
+    request::{Self, Request},
+    requirement::Requirement
 };
-use std::{internal::Permit, string::String};
+use std::{internal::Permit, string::String, type_name::{Self, TypeName}};
 use sui::{derived_object, dynamic_field as df, event, transfer::Receiving, vec_map::{Self, VecMap}};
 
 // === Errors ===
@@ -45,16 +46,25 @@ const EActionExists: vector<u8> = b"Action is already enabled";
 const EEntityAlreadyExists: vector<u8> = b"Entity already exists for this key";
 #[error(code = 10)]
 const ELocked: vector<u8> = b"Entity is locked";
+#[error(code = 11)]
+const EWrongModule: vector<u8> = b"Requirement does not target the author's installed module";
+#[error(code = 12)]
+const EModulesInstalled: vector<u8> = b"Uninstall every module before deleting an entity";
 
 // === Constants ===
 
-const VERSION: u64 = 1;
+// V1 had no complete module registry and could orphan installed state on delete.
+// V2 objects reject V1 package entry points; legacy entities cannot safely be
+// upgraded from a caller-supplied list because Move cannot enumerate their DFs.
+const VERSION: u64 = 2;
 
 // === Structs ===
 
 public struct ModuleKey(u64) has copy, drop, store;
 public struct ActionsKey() has copy, drop, store;
 public struct InFlight() has copy, drop, store;
+/// Complete module-slot index, initialized only when a V2 entity is created.
+public struct ModuleRegistryKey() has copy, drop, store;
 
 public struct Entity has key {
     id: UID,
@@ -94,6 +104,7 @@ public fun new(registry: &mut ObjectRegistry, id: u64, tenant: String): (Entity,
     let uid = derived_object::claim(registry.borrow_id(), key);
     let mut entity = Entity { id: uid, version: VERSION, key };
     df::add(&mut entity.id, ActionsKey(), vec_map::empty<String, Action>());
+    df::add(&mut entity.id, ModuleRegistryKey(), vec_map::empty<u64, TypeName>());
 
     event::emit(EntityCreated { entity_id: entity.id.to_inner(), key });
     entity.lock();
@@ -162,6 +173,8 @@ public fun install<T: store>(
     assert!(!df::exists(&entity.id, ModuleKey(module_id)), EModuleExists);
 
     df::add(&mut entity.id, ModuleKey(module_id), mod::new(name, inner, version));
+    let modules: &mut VecMap<u64, TypeName> = df::borrow_mut(&mut entity.id, ModuleRegistryKey());
+    modules.insert(module_id, type_name::with_original_ids<T>());
     entity.lock();
     request::new(
         option::some(entity.id.to_inner()),
@@ -180,6 +193,8 @@ public fun uninstall<T: store>(
     assert!(df::exists_with_type<_, Module<T>>(&entity.id, ModuleKey(module_id)), EModuleMissing);
 
     let m: Module<T> = df::remove(&mut entity.id, ModuleKey(module_id));
+    let modules: &mut VecMap<u64, TypeName> = df::borrow_mut(&mut entity.id, ModuleRegistryKey());
+    let (_, _) = modules.remove(&module_id);
     entity.lock();
     let req = request::new(
         option::some(entity.id.to_inner()),
@@ -249,6 +264,24 @@ public fun interact(
     request
 }
 
+/// Start a lifecycle operation authored by an installed module's package.
+/// This deliberately does not depend on owner-configured actions: a module can
+/// keep escrow claims and refunds reachable after ordinary actions are disabled.
+/// The module handler remains responsible for its operation's authorization.
+public fun begin_module_request<T: store>(
+    entity: &mut Entity,
+    module_id: u64,
+    requirement: Requirement,
+    _: Permit<T>,
+): Request {
+    assert!(entity.version == VERSION, EWrongVersion);
+    assert!(!entity.is_locked(), ELocked);
+    assert!(entity.has_module_with_type<T>(module_id), EModuleMissing);
+    assert!(requirement.module_id() == option::some(module_id), EWrongModule);
+    entity.lock();
+    request::new(option::some(entity.id.to_inner()), vector[requirement])
+}
+
 /// Mutable access to a module, only valid mid-interaction. The target module
 /// id is read off the request's next requirement (not the caller's args), so
 /// a handler can never mutate the wrong module.
@@ -276,6 +309,7 @@ public fun module_ref<T: store>(entity: &Entity, module_id: u64, _: Permit<T>): 
 public fun request_delete(entity: &mut Entity): (Request, DeleteTicket) {
     assert!(entity.version == VERSION, EWrongVersion);
     assert!(!entity.is_locked(), ELocked);
+    assert!(entity.module_count() == 0, EModulesInstalled);
     entity.lock();
     let entity_id = entity.id.to_inner();
     let req = request::new(
@@ -285,14 +319,13 @@ public fun request_delete(entity: &mut Entity): (Request, DeleteTicket) {
     (req, DeleteTicket { entity_id })
 }
 
-/// Consume the entity after `request_delete` and a completed request. Strips
-/// remaining DFs and deletes the UID. The derived `EntityKey` stays claimed.
-///
-/// TODO: check for orphaned modules. Delete no longer checks
-/// installed modules; leftover module DFs are orphaned.
+/// Consume an empty entity after `request_delete` and a completed request.
+/// Installed modules must have been uninstalled through their own teardown
+/// checks. The derived `EntityKey` stays claimed.
 public fun delete(mut entity: Entity, req: Request, ticket: DeleteTicket) {
     assert!(entity.version == VERSION, EWrongVersion);
     assert!(entity.is_locked(), ENotLocked);
+    assert!(entity.module_count() == 0, EModulesInstalled);
     let DeleteTicket { entity_id } = ticket;
     assert!(entity_id == entity.id.to_inner(), EWrongEntity);
     req.entity_id().do!(|id| assert!(id == entity.id.to_inner(), EWrongEntity));
@@ -300,6 +333,7 @@ public fun delete(mut entity: Entity, req: Request, ticket: DeleteTicket) {
     entity.unlock();
 
     let _: VecMap<String, Action> = df::remove(&mut entity.id, ActionsKey());
+    let _: VecMap<u64, TypeName> = df::remove(&mut entity.id, ModuleRegistryKey());
     let Entity { id, version: _, key } = entity;
     event::emit(EntityDeleted { entity_id: id.to_inner(), key });
     id.delete();
@@ -336,6 +370,18 @@ public fun version(entity: &Entity): u64 {
     entity.version
 }
 
+/// Number of installed modules; all slots must be removed before deletion.
+public fun module_count(entity: &Entity): u64 {
+    assert!(entity.version == VERSION, EWrongVersion);
+    entity.installed_modules().length()
+}
+
+/// Complete read-only registry of installed slots and their original type IDs.
+public fun installed_modules(entity: &Entity): &VecMap<u64, TypeName> {
+    assert!(entity.version == VERSION, EWrongVersion);
+    df::borrow(&entity.id, ModuleRegistryKey())
+}
+
 // === Private Functions ===
 
 fun lock(entity: &mut Entity) {
@@ -348,4 +394,11 @@ fun unlock(entity: &mut Entity) {
 
 fun is_locked(entity: &Entity): bool {
     df::exists(&entity.id, InFlight())
+}
+
+// === Test Functions ===
+
+#[test_only]
+public fun set_version_for_testing(entity: &mut Entity, version: u64) {
+    entity.version = version;
 }

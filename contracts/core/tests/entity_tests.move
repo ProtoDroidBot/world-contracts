@@ -40,7 +40,7 @@ fun new_sets_initial_fields() {
         admin_service::verify_admin(&mut req, &acl, scenario.ctx());
         e.complete_request(req);
 
-        assert!(entity::version(&e) == 1);
+        assert!(entity::version(&e) == 2);
         assert!(entity::key(&e).id() == 1);
         assert!(entity::key(&e).tenant() == tenant());
         assert!(!entity::has_module(&e, counter_id()));

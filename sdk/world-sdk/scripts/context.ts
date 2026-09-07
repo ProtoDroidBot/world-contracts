@@ -29,9 +29,9 @@ export function loadScriptContext(): ScriptContext {
   const repoRoot = fileURLToPath(new URL('../../..', import.meta.url))
   const manifestPath = `${repoRoot}/deployments/${deployEnv}/world.json`
 
-  const privateKey = process.env.SUI_PRIVATE_KEY
+  const privateKey = process.env.DEPLOYER_PRIVATE_KEY
   if (!privateKey) {
-    throw new Error('SUI_PRIVATE_KEY is required (the deploying admin key)')
+    throw new Error('DEPLOYER_PRIVATE_KEY is required (the deploying admin key)')
   }
   const keypair = Ed25519Keypair.fromSecretKey(privateKey)
 

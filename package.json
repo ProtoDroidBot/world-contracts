@@ -1,31 +1,5 @@
 {
-  "name": "world-contracts",
-  "version": "1.0.0",
-  "type": "module",
-  "description": "contracts for eve frontier",
-  "packageManager": "pnpm@9.15.0",
-  "scripts": {
-    "prepare": "husky",
-    "build": "find contracts -maxdepth 1 -mindepth 1 -type d -not -name archive | xargs -P 4 -I {} sui move build --build-env testnet --path {}",
-    "lint": "find contracts -maxdepth 1 -mindepth 1 -type d -not -name archive | xargs -P 4 -I {} sui move build --build-env testnet --lint --path {}",
-    "test": "find contracts -maxdepth 1 -mindepth 1 -type d -not -name archive | xargs -P 4 -I {} sui move test --build-env testnet --path {}",
-    "fmt": "prettier --plugin=@mysten/prettier-plugin-move --write \"**/**/*.move\"",
-    "fmt:check": "prettier --plugin=@mysten/prettier-plugin-move --check \"**/**/*.move\" ",
-    "lint:ts": "biome check --write",
-    "lint:ts:check": "biome check",
-    "clean": "rm -rf contracts/**/Published.toml deployments/*",
-    "extract:errors": "tsx tools/error-decoder/error-extractor.ts",
-    "compile:decoder": "tsc --project tools/error-decoder/tsconfig.json",
-    "prepare:decoder": "cd tools/error-decoder && cp index.html styles.css error-map.json dist/",
-    "build:decoder": "npm run extract:errors && npm run compile:decoder && npm run prepare:decoder",
-    "dev:decoder": "npm run extract:errors && npm run compile:decoder -- --watch",
-    "debug:prepare": "chmod +x ./scripts/prepare-debug.sh && ./scripts/prepare-debug.sh",
-    "test:sdk:integration": "pnpm --filter @evefrontier/world-sdk test:integration"
-  },
-  "lint-staged": {
-    "*.ts": "biome check --write --no-errors-on-unmatched",
-    "*.move": "prettier --plugin=@mysten/prettier-plugin-move --write"
-  },
+  "author": "EVE Frontier",
   "dependencies": {
     "@iarna/toml": "^2.2.5",
     "@mysten/bcs": "^2.0.2",
@@ -35,8 +9,7 @@
     "dotenv": "^17.2.3",
     "prettier": "^3.7.4"
   },
-  "author": "EVE Frontier",
-  "license": "MIT",
+  "description": "contracts for eve frontier",
   "devDependencies": {
     "@biomejs/biome": "2.4.15",
     "@types/node": "^24.10.4",
@@ -44,5 +17,36 @@
     "lint-staged": "^17.0.7",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
-  }
+  },
+  "engines": {
+    "node": "\u003e=24.0.0",
+    "pnpm": "\u003e=9.0.0"
+  },
+  "license": "MIT",
+  "lint-staged": {
+    "*.move": "prettier --plugin=@mysten/prettier-plugin-move --write",
+    "*.ts": "biome check --write --no-errors-on-unmatched"
+  },
+  "name": "world-contracts",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "find contracts -maxdepth 1 -mindepth 1 -type d -not -name archive | xargs -P 4 -I {} sui move build --build-env testnet --path {}",
+    "build:decoder": "npm run extract:errors \u0026\u0026 npm run compile:decoder \u0026\u0026 npm run prepare:decoder",
+    "clean": "rm -rf contracts/**/Published.toml deployments/*",
+    "compile:decoder": "tsc --project tools/error-decoder/tsconfig.json",
+    "debug:prepare": "chmod +x ./scripts/prepare-debug.sh \u0026\u0026 ./scripts/prepare-debug.sh",
+    "dev:decoder": "npm run extract:errors \u0026\u0026 npm run compile:decoder -- --watch",
+    "extract:errors": "tsx tools/error-decoder/error-extractor.ts",
+    "fmt": "prettier --plugin=@mysten/prettier-plugin-move --write \"**/**/*.move\"",
+    "fmt:check": "prettier --plugin=@mysten/prettier-plugin-move --check \"**/**/*.move\" ",
+    "lint": "find contracts -maxdepth 1 -mindepth 1 -type d -not -name archive | xargs -P 4 -I {} sui move build --build-env testnet --lint --path {}",
+    "lint:ts": "biome check --write",
+    "lint:ts:check": "biome check",
+    "prepare": "husky",
+    "prepare:decoder": "cd tools/error-decoder \u0026\u0026 cp index.html styles.css error-map.json dist/",
+    "test": "find contracts -maxdepth 1 -mindepth 1 -type d -not -name archive | xargs -P 4 -I {} sui move test --build-env testnet --path {}",
+    "test:sdk:integration": "pnpm --filter @evefrontier/world-sdk test:integration"
+  },
+  "type": "module",
+  "version": "1.0.0"
 }

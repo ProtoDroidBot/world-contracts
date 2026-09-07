@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 # lib.sh lives at /app/scripts/lib.sh (full repo COPY'd to /app). It runs
 # `cd $REPO_ROOT` via setup(), so we don't cd here.
@@ -13,9 +12,11 @@ case "$ENV" in
     testnet)  RPC_URL="${SUI_RPC_URL:-https://fullnode.testnet.sui.io:443}" ;;
     devnet)   RPC_URL="${SUI_RPC_URL:-https://fullnode.devnet.sui.io:443}" ;;
     mainnet)  RPC_URL="${SUI_RPC_URL:-https://fullnode.mainnet.sui.io:443}" ;;
-    localnet) RPC_URL="${SUI_RPC_URL:-http://127.0.0.1:9000}" ;;
+    localnet) RPC_URL="${SUI_RPC_URL:-http://host.docker.internal:9000}" ;;
     *)        echo "Error: Invalid SUI_NETWORK '$ENV'"; exit 1 ;;
 esac
+
+export SUI_RPC_URL="$RPC_URL"
 
 echo "======================================"
 echo "  Environment : $ENV"

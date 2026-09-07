@@ -18,6 +18,11 @@ commands=(
   seed:storage-units
 )
 
+# Industry data is synthetic and only installed on localnet.
+if [[ "$ENV" == "localnet" ]]; then
+  commands+=(seed:industry)
+fi
+
 echo "Seeding world on $ENV: ${#commands[@]} steps with ${DELAY_SECONDS}s delay..."
 
 for i in "${!commands[@]}"; do

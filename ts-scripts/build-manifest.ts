@@ -53,6 +53,14 @@ interface Manifest {
   packages: Record<string, PackageEntry>
   sharedObjects: Record<string, SharedObjectEntry>
   mvr?: Record<string, MvrEntry>
+  industryFixture?: {
+    tenant: string
+    entityId: string
+    ownerCapId: string
+    itemTypeRegistryId: string
+    recipeRegistryId: string
+    recipes: Record<string, string>
+  }
 }
 
 const UPGRADE_CAP_TYPE = '0x2::package::UpgradeCap'
@@ -68,6 +76,10 @@ const UPGRADE_CAP_TYPE = '0x2::package::UpgradeCap'
 const SHARED_OBJECT_KEYS: Record<string, string> = {
   'object_registry::ObjectRegistry': 'objectRegistry',
   'admin_service::AdminACL': 'adminAcl',
+  // Explicit catalog bootstrap is persisted by seed-industry.ts; ordinary publish
+  // does not run create() and existing entries are preserved on upgrade.
+  'item_type::ItemTypeRegistry': 'itemTypeRegistry',
+  'recipe::RecipeRegistry': 'recipeRegistry',
 }
 
 function isCreated(c: ObjectChange): c is CreatedChange {
@@ -179,6 +191,9 @@ function main(): void {
     packages: { ...(existing.packages ?? {}) },
     sharedObjects: existing.sharedObjects ?? {},
     ...(existing.mvr ? { mvr: existing.mvr } : {}),
+    ...(existing.industryFixture
+      ? { industryFixture: existing.industryFixture }
+      : {}),
   }
 
   for (const pkg of packages) {

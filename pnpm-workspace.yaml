@@ -1,6 +1,5 @@
 packages:
   - "sdk/*"
-
 # Single source of truth for shared dependency versions across the workspace.
 catalog:
   "@mysten/sui": ^2.0.0
@@ -13,3 +12,5 @@ catalog:
   tsx: ^4.21.0
   "@types/node": ^24.10.4
   vitest: ^4.1.9
+allowBuilds:
+  esbuild: true

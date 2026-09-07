@@ -293,3 +293,29 @@ fun transfer_access_aborts_on_soulbound_cap() {
 
     abort
 }
+
+#[test]
+fun direct_cap_validation_accepts_current_version() {
+    let mut scenario = ts::begin(ADMIN);
+    setup(&mut scenario);
+    create_entity(&mut scenario, 1);
+    mint_cap_for(&mut scenario, OWNER, false);
+    ts::next_tx(&mut scenario, OWNER);
+    let cap = ts::take_from_sender<AccessCap>(&scenario);
+    cap.assert_valid();
+    ts::return_to_sender(&scenario, cap);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = access_cap::EWrongVersion)]
+fun direct_cap_validation_rejects_unsupported_version() {
+    let mut scenario = ts::begin(ADMIN);
+    setup(&mut scenario);
+    create_entity(&mut scenario, 1);
+    mint_cap_for(&mut scenario, OWNER, false);
+    ts::next_tx(&mut scenario, OWNER);
+    let mut cap = ts::take_from_sender<AccessCap>(&scenario);
+    cap.set_version_for_testing(0);
+    cap.assert_valid();
+    abort
+}
