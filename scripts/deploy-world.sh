@@ -6,7 +6,7 @@ source "$(dirname "$0")/lib.sh"
 setup
 ENV=$(get_env "${1:-}")
 pnpm clean
-rm -rf contracts/world/Pub.*.toml
+rm -rf contracts/*/Pub.*.toml
 mkdir -p "deployments/$ENV"
 start_logging "$ENV" "deploy-world"
 
@@ -16,9 +16,20 @@ pnpm i
 echo "--- sui client publish ---"
 publish world "deployments/$ENV/world_package.json" "$ENV"
 
+echo "--- publish feature packages ---"
+SHARED_LOCALNET_PUBFILE="../world/Pub.localnet.toml"
+publish world_npc "deployments/$ENV/world_npc_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
+publish world_catapult "deployments/$ENV/world_catapult_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
+publish world_smart_industry "deployments/$ENV/world_smart_industry_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
+publish world_transponder "deployments/$ENV/world_transponder_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
+publish world_assembly_access "deployments/$ENV/world_assembly_access_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
+
 echo "--- extract-object-ids ---"
 export SUI_NETWORK="$ENV"
 pnpm exec tsx ts-scripts/utils/extract-object-ids.ts
+
+echo "--- write-npc-deployment ---"
+pnpm exec tsx ts-scripts/utils/write-npc-deployment.ts
 
 echo "Deployed world to $ENV. Output: deployments/$ENV/"
 echo "Log: deployments/$ENV/deploy.log"

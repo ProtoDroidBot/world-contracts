@@ -1,11 +1,11 @@
 import "dotenv/config";
 import { Transaction } from "@mysten/sui/transactions";
+import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { getConfig, MODULES } from "../utils/config";
 import { getConnectedAssemblies, getOwnerCap, getAssemblyTypes } from "./helper";
 import { deriveObjectId } from "../utils/derive-object-id";
 import { CLOCK_OBJECT_ID, GAME_CHARACTER_ID, NWN_ITEM_ID } from "../utils/constants";
-import { SuiClient, signAndExecute } from "../utils/client";
 import {
     hydrateWorldConfig,
     initializeContext,
@@ -45,7 +45,7 @@ function getConnectedOfflineCall(kind: string): { module: string; functionName: 
 async function offline(
     networkNodeId: string,
     ownerCapId: string,
-    client: SuiClient,
+    client: SuiJsonRpcClient,
     keypair: Ed25519Keypair,
     config: ReturnType<typeof getConfig>
 ) {
@@ -110,9 +110,10 @@ async function offline(
         });
     }
 
-    const result = await signAndExecute(client, {
+    const result = await client.signAndExecuteTransaction({
         transaction: tx,
         signer: keypair,
+        options: { showObjectChanges: true, showEffects: true },
     });
 
     console.log("Transaction digest:", result.digest);

@@ -6,7 +6,7 @@
 module world::character;
 
 use std::string::String;
-use sui::{derived_object, event, transfer::Receiving};
+use sui::{derived_object, dynamic_field, event, transfer::Receiving};
 use world::{
     access::{Self, AdminACL, OwnerCap},
     in_game_id::{Self, TenantItemId},
@@ -35,6 +35,8 @@ const ESenderCannotAccessCharacter: vector<u8> = b"Sender cannot access Characte
 const EMetadataNotSet: vector<u8> = b"Metadata not set on character";
 #[error(code = 7)]
 const ECharacterNotAuthorized: vector<u8> = b"Character access not authorized";
+#[error(code = 8)]
+const ENpcCharacterPermanent: vector<u8> = b"NPC character identity cannot be deleted or reassigned";
 
 public struct Character has key {
     id: UID,
@@ -51,6 +53,9 @@ public struct PlayerProfile has key {
     id: UID,
     character_id: ID,
 }
+
+/// Dynamic marker preserves the deployed Character and PlayerProfile layouts.
+public struct NpcProfileMarker has copy, drop, store {}
 
 // Events
 public struct CharacterCreatedEvent has copy, drop {
@@ -87,6 +92,34 @@ public fun tribe(character: &Character): u32 {
 
 public fun owner_cap_id(character: &Character): ID {
     character.owner_cap_id
+}
+
+public fun is_npc_character(character: &Character): bool {
+    dynamic_field::exists_(&character.id, NpcProfileMarker {})
+}
+
+public fun npc_profile_id(character: &Character): Option<ID> {
+    if (is_npc_character(character)) {
+        option::some(*dynamic_field::borrow<NpcProfileMarker, ID>(&character.id, NpcProfileMarker {}))
+    } else {
+        option::none()
+    }
+}
+
+public(package) fun link_npc_profile(character: &mut Character, profile_id: ID) {
+    assert!(!is_npc_character(character), ENpcCharacterPermanent);
+    dynamic_field::add(&mut character.id, NpcProfileMarker {}, profile_id);
+}
+
+/// Permanently marks a Character as an NPC in an authorized game-server transaction.
+public fun link_npc_profile_sponsored(
+    character: &mut Character,
+    profile_id: ID,
+    admin_acl: &AdminACL,
+    ctx: &TxContext,
+) {
+    admin_acl.verify_sponsor(ctx);
+    link_npc_profile(character, profile_id);
 }
 
 // === Public Functions ===
@@ -224,6 +257,7 @@ public fun update_tribe(
     ctx: &TxContext,
 ) {
     admin_acl.verify_sponsor(ctx);
+    assert!(!is_npc_character(character), ENpcCharacterPermanent);
     assert!(tribe_id != 0, ETribeIdEmpty);
     character.tribe_id = tribe_id;
 }
@@ -238,6 +272,7 @@ public fun update_address(
     ctx: &TxContext,
 ) {
     admin_acl.verify_sponsor(ctx);
+    assert!(!is_npc_character(character), ENpcCharacterPermanent);
     assert!(character_address != @0x0, EAddressEmpty);
     character.character_address = character_address;
 }
@@ -250,6 +285,7 @@ public fun update_tenant_id(
     ctx: &TxContext,
 ) {
     admin_acl.verify_sponsor(ctx);
+    assert!(!is_npc_character(character), ENpcCharacterPermanent);
     assert!(tenant.length() > 0, ETenantEmpty);
     let current_id = in_game_id::item_id(&character.key);
     character.key = in_game_id::create_key(current_id, tenant);
@@ -259,6 +295,7 @@ public fun update_tenant_id(
 /// cleaned up here; it will be obsolete once replaced by the OwnerCap-to-wallet flow.
 public fun delete_character(character: Character, admin_acl: &AdminACL, ctx: &TxContext) {
     admin_acl.verify_sponsor(ctx);
+    assert!(!is_npc_character(&character), ENpcCharacterPermanent);
     let Character { id, metadata, .. } = character;
     if (std::option::is_some(&metadata)) {
         let m = std::option::destroy_some(metadata);

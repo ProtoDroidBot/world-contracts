@@ -1,0 +1,12 @@
+[package]
+name = "world_assembly_access"
+edition = "2024.beta"
+
+[dependencies]
+world = { local = "../world" }
+world_npc = { local = "../world_npc" }
+
+[environments]
+testnet_internal = "4c78adac"
+testnet_utopia = "4c78adac"
+testnet_stillness = "4c78adac"

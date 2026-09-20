@@ -207,12 +207,15 @@ fun link_and_online_gates(
         let (owner_cap_a, receipt_a) = character.borrow_owner_cap<Gate>(gate_a_ticket, ts.ctx());
         let (owner_cap_b, receipt_b) = character.borrow_owner_cap<Gate>(gate_b_ticket, ts.ctx());
 
-        let proof = test_helpers::construct_location_proof(
+        let proof_bytes = distance_proof_bytes(
+            gate_a_id,
+            gate_b_id,
+            0,
+            user_a(),
+            test_helpers::get_verified_location_hash(),
             test_helpers::get_verified_location_hash(),
         );
-        let proof_bytes = bcs::to_bytes(&proof);
-        let clock = clock::create_for_testing(ts.ctx());
-        gate_a.link_gates(
+        gate_a.link_gates_for_testing(
             &mut gate_b,
             &gate_config,
             &server_registry,
@@ -220,14 +223,12 @@ fun link_and_online_gates(
             &owner_cap_a,
             &owner_cap_b,
             proof_bytes,
-            &clock,
             ts.ctx(),
         );
 
         gate_a.online(&mut nwn, &energy_config, &owner_cap_a);
         gate_b.online(&mut nwn, &energy_config, &owner_cap_b);
 
-        clock.destroy_for_testing();
         character.return_owner_cap(owner_cap_a, receipt_a);
         character.return_owner_cap(owner_cap_b, receipt_b);
         ts::return_shared(character);
@@ -256,15 +257,20 @@ fun authorize_gate_extension(ts: &mut ts::Scenario, character_id: ID, gate_id: I
     };
 }
 
-fun distance_proof_bytes(distance: u64, player: address, target_hash: vector<u8>): vector<u8> {
-    // Distance is checked BEFORE signature verification in `location::verify_distance`,
-    // so a dummy signature is fine to deterministically hit `EOutOfRange`.
+fun distance_proof_bytes(
+    source_id: ID,
+    target_id: ID,
+    distance: u64,
+    player: address,
+    source_hash: vector<u8>,
+    target_hash: vector<u8>,
+): vector<u8> {
     let proof = world::location::create_location_proof(
         server_admin(),
         player,
-        object::id_from_bytes(x"0000000000000000000000000000000000000000000000000000000000000001"),
-        target_hash,
-        object::id_from_bytes(x"0000000000000000000000000000000000000000000000000000000000000002"),
+        source_id,
+        source_hash,
+        target_id,
         target_hash,
         distance,
         b"",
@@ -272,6 +278,114 @@ fun distance_proof_bytes(distance: u64, player: address, target_hash: vector<u8>
         x"00",
     );
     bcs::to_bytes(&proof)
+}
+
+const TAMPER_SOURCE_ID: u8 = 1;
+const TAMPER_TARGET_ID: u8 = 2;
+const TAMPER_SOURCE_HASH: u8 = 3;
+const TAMPER_TARGET_HASH: u8 = 4;
+
+fun link_with_tampered_proof(tamper: u8) {
+    let mut ts = ts::begin(governor());
+    setup(&mut ts);
+
+    let character_id = create_character(&mut ts, user_a(), 618);
+    let nwn_id = create_network_node(&mut ts, character_id);
+    let gate_a_id = create_gate(&mut ts, character_id, nwn_id, GATE_TYPE_ID_1, GATE_ITEM_ID_1);
+    let gate_b_id = create_gate(&mut ts, character_id, nwn_id, GATE_TYPE_ID_1, GATE_ITEM_ID_2);
+
+    ts::next_tx(&mut ts, user_a());
+    {
+        let gate_config = ts::take_shared<GateConfig>(&ts);
+        let server_registry = ts::take_shared<ServerAddressRegistry>(&ts);
+        let admin_acl = ts::take_shared<AdminACL>(&ts);
+        let mut gate_a = ts::take_shared_by_id<Gate>(&ts, gate_a_id);
+        let mut gate_b = ts::take_shared_by_id<Gate>(&ts, gate_b_id);
+        let mut character = ts::take_shared_by_id<Character>(&ts, character_id);
+        let (owner_cap_a, receipt_a) = character.borrow_owner_cap<Gate>(
+            ts::receiving_ticket_by_id<OwnerCap<Gate>>(gate_a.owner_cap_id()),
+            ts.ctx(),
+        );
+        let (owner_cap_b, receipt_b) = character.borrow_owner_cap<Gate>(
+            ts::receiving_ticket_by_id<OwnerCap<Gate>>(gate_b.owner_cap_id()),
+            ts.ctx(),
+        );
+        let source_location_hash = test_helpers::get_verified_location_hash();
+        let target_location_hash = test_helpers::get_verified_location_hash();
+        let proof_source_id = if (tamper == TAMPER_SOURCE_ID) {
+            object::id_from_address(@0xbad1)
+        } else {
+            gate_a_id
+        };
+        let proof_target_id = if (tamper == TAMPER_TARGET_ID) {
+            object::id_from_address(@0xbad2)
+        } else {
+            gate_b_id
+        };
+        let proof_source_hash = if (tamper == TAMPER_SOURCE_HASH) {
+            x"ff"
+        } else {
+            source_location_hash
+        };
+        let proof_target_hash = if (tamper == TAMPER_TARGET_HASH) {
+            x"ee"
+        } else {
+            target_location_hash
+        };
+        let proof_bytes = distance_proof_bytes(
+            proof_source_id,
+            proof_target_id,
+            0,
+            user_a(),
+            proof_source_hash,
+            proof_target_hash,
+        );
+
+        gate_a.link_gates_for_testing(
+            &mut gate_b,
+            &gate_config,
+            &server_registry,
+            &admin_acl,
+            &owner_cap_a,
+            &owner_cap_b,
+            proof_bytes,
+            ts.ctx(),
+        );
+
+        character.return_owner_cap(owner_cap_a, receipt_a);
+        character.return_owner_cap(owner_cap_b, receipt_b);
+        ts::return_shared(character);
+        ts::return_shared(gate_a);
+        ts::return_shared(gate_b);
+        ts::return_shared(gate_config);
+        ts::return_shared(server_registry);
+        ts::return_shared(admin_acl);
+    };
+    ts::end(ts);
+}
+
+#[test]
+#[expected_failure(abort_code = location::EInvalidSourceStructure)]
+fun link_rejects_proof_for_another_source_gate() {
+    link_with_tampered_proof(TAMPER_SOURCE_ID);
+}
+
+#[test]
+#[expected_failure(abort_code = location::EInvalidTargetStructure)]
+fun link_rejects_proof_for_another_target_gate() {
+    link_with_tampered_proof(TAMPER_TARGET_ID);
+}
+
+#[test]
+#[expected_failure(abort_code = location::EInvalidSourceLocationHash)]
+fun link_rejects_proof_for_another_source_location() {
+    link_with_tampered_proof(TAMPER_SOURCE_HASH);
+}
+
+#[test]
+#[expected_failure(abort_code = location::EInvalidLocationHash)]
+fun link_rejects_proof_for_another_target_location() {
+    link_with_tampered_proof(TAMPER_TARGET_HASH);
 }
 
 #[test]
@@ -973,11 +1087,15 @@ fun jump_fails_when_gate_is_offline() {
             ts::receiving_ticket_by_id<OwnerCap<Gate>>(gate_b.owner_cap_id()),
             ts.ctx(),
         );
-        let proof_bytes = bcs::to_bytes(
-            &test_helpers::construct_location_proof(test_helpers::get_verified_location_hash()),
+        let proof_bytes = distance_proof_bytes(
+            gate_a_id,
+            gate_b_id,
+            0,
+            user_a(),
+            test_helpers::get_verified_location_hash(),
+            test_helpers::get_verified_location_hash(),
         );
-        let clock = clock::create_for_testing(ts.ctx());
-        gate_a.link_gates(
+        gate_a.link_gates_for_testing(
             &mut gate_b,
             &gate_config,
             &server_registry,
@@ -985,7 +1103,6 @@ fun jump_fails_when_gate_is_offline() {
             &owner_cap_a,
             &owner_cap_b,
             proof_bytes,
-            &clock,
             ts.ctx(),
         );
         gate_a.test_jump(&gate_b, &character);
@@ -998,7 +1115,6 @@ fun jump_fails_when_gate_is_offline() {
         ts::return_shared(gate_config);
         ts::return_shared(server_registry);
         ts::return_shared(admin_acl);
-        clock.destroy_for_testing();
     };
     ts::end(ts);
 }
@@ -1405,12 +1521,14 @@ fun link_fails_when_distance_exceeds_max() {
             ts.ctx(),
         );
         let proof_bytes = distance_proof_bytes(
+            gate_a_id,
+            gate_b_id,
             2,
             user_a(),
             test_helpers::get_verified_location_hash(),
+            test_helpers::get_verified_location_hash(),
         );
-        let clock = clock::create_for_testing(ts.ctx());
-        gate_a.link_gates(
+        gate_a.link_gates_for_testing(
             &mut gate_b,
             &gate_config,
             &server_registry,
@@ -1418,7 +1536,6 @@ fun link_fails_when_distance_exceeds_max() {
             &owner_cap_a,
             &owner_cap_b,
             proof_bytes,
-            &clock,
             ts.ctx(),
         );
         character.return_owner_cap(owner_cap_a, receipt_a);
@@ -1429,7 +1546,6 @@ fun link_fails_when_distance_exceeds_max() {
         ts::return_shared(gate_config);
         ts::return_shared(server_registry);
         ts::return_shared(admin_acl);
-        clock.destroy_for_testing();
     };
     ts::end(ts);
 }

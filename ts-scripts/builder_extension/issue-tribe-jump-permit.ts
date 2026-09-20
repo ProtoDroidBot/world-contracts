@@ -11,7 +11,6 @@ import {
 import { getEnvConfig, handleError, hydrateWorldConfig, initializeContext } from "../utils/helper";
 import { resolveBuilderGateExtensionIds } from "../utils/builder-extension";
 import { MODULE as extensionModule } from "./modules";
-import { signAndExecute } from "../utils/client";
 
 async function issueJumpPermit(
     ctx: ReturnType<typeof initializeContext>,
@@ -46,9 +45,10 @@ async function issueJumpPermit(
         ],
     });
 
-    const result = await signAndExecute(client, {
+    const result = await client.signAndExecuteTransaction({
         transaction: tx,
         signer: keypair,
+        options: { showEffects: true, showObjectChanges: true, showEvents: true },
     });
 
     console.log("\nJumpPermit issued!");

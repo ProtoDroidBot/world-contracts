@@ -13,7 +13,6 @@ import {
 import { requireBuilderPackageId } from "../utils/builder-extension";
 import { getOwnerCap as getStorageUnitOwnerCap } from "../storage-unit/helper";
 import { MODULE as extensionModule } from "./modules";
-import { signAndExecute } from "../utils/client";
 
 const builderPackageId = requireBuilderPackageId();
 const characterItemId = GAME_CHARACTER_ID;
@@ -65,9 +64,10 @@ async function authoriseStorageUnit(
         arguments: [tx.object(characterId), storageUnitOwnerCap, receipt],
     });
 
-    const result = await signAndExecute(client, {
+    const result = await client.signAndExecuteTransaction({
         transaction: tx,
         signer: keypair,
+        options: { showEffects: true, showObjectChanges: true, showEvents: true },
     });
 
     console.log("\nExtension authorized successfully!");

@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Transaction } from "@mysten/sui/transactions";
 import { MODULES } from "../utils/config";
 import { deriveObjectId } from "../utils/derive-object-id";
@@ -11,23 +12,23 @@ import {
 } from "../utils/helper";
 import { GATE_ITEM_ID_1 } from "../utils/constants";
 import { MODULE as extensionModule } from "./modules";
-import { SuiClient, signAndExecute } from "../utils/client";
 
 // Upgraded builder package ID (published-at from Move.toml)
 const BUILDER_PACKAGE_LATEST = process.env.UPGRADED_BUILDER_PACKAGE_ID || "";
 
 async function getOwnedJumpPermitId(
-    client: SuiClient,
+    client: SuiJsonRpcClient,
     owner: string,
     worldPackageId: string
 ): Promise<string | null> {
     const type = `${worldPackageId}::${MODULES.GATE}::JumpPermit`;
-    const res = await client.listOwnedObjects({
+    const res = await client.getOwnedObjects({
         owner,
-        type,
+        filter: { StructType: type },
         limit: 1,
     });
-    return res.objects[0]?.objectId ?? null;
+    const first = res.data?.[0]?.data;
+    return first?.objectId ?? null;
 }
 
 async function voidJumpPermitViaExtension(ctx: ReturnType<typeof initializeContext>) {
@@ -52,9 +53,10 @@ async function voidJumpPermitViaExtension(ctx: ReturnType<typeof initializeConte
         arguments: [tx.object(sourceGateId), tx.object(jumpPermitId)],
     });
 
-    const result = await signAndExecute(client, {
+    const result = await client.signAndExecuteTransaction({
         transaction: tx,
         signer: keypair,
+        options: { showEffects: true, showObjectChanges: true, showEvents: true },
     });
 
     console.log("JumpPermit deleted via extension (tribe_permit):", jumpPermitId);

@@ -27,6 +27,12 @@ const ESignatureVerificationFailed: vector<u8> = b"Signature verification failed
 const EDeadlineExpired: vector<u8> = b"Deadline has expired";
 #[error(code = 7)]
 const EOutOfRange: vector<u8> = b"Invalid Distance";
+#[error(code = 8)]
+const EInvalidSourceStructure: vector<u8> = b"Location proof source object does not match";
+#[error(code = 9)]
+const EInvalidTargetStructure: vector<u8> = b"Location proof target object does not match";
+#[error(code = 10)]
+const EInvalidSourceLocationHash: vector<u8> = b"Location proof source hash does not match";
 
 // === Structs ===
 
@@ -201,6 +207,44 @@ public fun verify_distance(
     )
 }
 
+/// Verify a server-signed distance proof for one exact pair of on-chain objects.
+///
+/// Unlike `verify_distance`, this binds both object IDs and both committed location hashes,
+/// and enforces the signed deadline. It is intended for state changes such as linking two
+/// Smart Gates, where accepting a distance belonging to another object pair would be unsafe.
+public fun verify_distance_between(
+    source_location: &Location,
+    target_location: &Location,
+    source_id: ID,
+    target_id: ID,
+    server_registry: &ServerAddressRegistry,
+    proof_bytes: vector<u8>,
+    max_distance: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let (message, signature) = unpack_proof(proof_bytes);
+    validate_distance_pair(
+        &message,
+        source_location,
+        target_location,
+        source_id,
+        target_id,
+        server_registry,
+        ctx.sender(),
+        max_distance,
+    );
+    assert!(is_deadline_valid(message.deadline_ms, clock), EDeadlineExpired);
+    assert!(
+        sig_verify::verify_signature(
+            bcs::to_bytes(&message),
+            signature,
+            message.server_address,
+        ),
+        ESignatureVerificationFailed,
+    )
+}
+
 /// Verifies if two locations are in proximity based on their hashes.
 ///
 /// It is used for ephemeral storage operations where both inventory are in the same location
@@ -335,6 +379,25 @@ fun validate_proof_message(
     assert!(message.target_location_hash == expected_location.location_hash, EInvalidLocationHash);
 }
 
+fun validate_distance_pair(
+    message: &LocationProofMessage,
+    source_location: &Location,
+    target_location: &Location,
+    source_id: ID,
+    target_id: ID,
+    server_registry: &ServerAddressRegistry,
+    sender: address,
+    max_distance: u64,
+) {
+    assert!(access::is_authorized_server_address(server_registry, message.server_address), EUnauthorizedServer);
+    assert!(message.player_address == sender, EUnverifiedSender);
+    assert!(message.source_structure_id == source_id, EInvalidSourceStructure);
+    assert!(message.target_structure_id == target_id, EInvalidTargetStructure);
+    assert!(message.source_location_hash == source_location.location_hash, EInvalidSourceLocationHash);
+    assert!(message.target_location_hash == target_location.location_hash, EInvalidLocationHash);
+    assert!(message.distance <= max_distance, EOutOfRange);
+}
+
 /// Deserializes a LocationProof from bytes using BCS peel functions.
 ///
 /// BCS serializes structs field-by-field, so we peel each field in order:
@@ -463,6 +526,32 @@ public fun verify_proximity_proof_from_bytes_without_deadline(
             message.server_address,
         ),
         ESignatureVerificationFailed,
+    );
+}
+
+/// Test-only pair validation omits signature and deadline checks so unit tests can use
+/// dynamically derived object IDs without embedding private signing keys in Move sources.
+#[test_only]
+public fun verify_distance_between_without_signature(
+    source_location: &Location,
+    target_location: &Location,
+    source_id: ID,
+    target_id: ID,
+    server_registry: &ServerAddressRegistry,
+    proof_bytes: vector<u8>,
+    max_distance: u64,
+    ctx: &mut TxContext,
+) {
+    let (message, _) = unpack_proof(proof_bytes);
+    validate_distance_pair(
+        &message,
+        source_location,
+        target_location,
+        source_id,
+        target_id,
+        server_registry,
+        ctx.sender(),
+        max_distance,
     );
 }
 

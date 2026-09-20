@@ -12,7 +12,6 @@ import {
 } from "../utils/helper";
 import { deriveObjectId } from "../utils/derive-object-id";
 import { LOCATION_HASH, GAME_CHARACTER_ID, NWN_TYPE_ID, NWN_ITEM_ID } from "../utils/constants";
-import { signAndExecute } from "../utils/client";
 
 export const FUEL_MAX_CAPACITY = 10000n;
 export const FUEL_BURN_RATE_IN_MS = BigInt(3600 * 1000); // 1 hour
@@ -48,9 +47,10 @@ async function createNetworkNode(
         arguments: [nwn, tx.object(adminAcl)],
     });
 
-    const result = await signAndExecute(client, {
+    const result = await client.signAndExecuteTransaction({
         transaction: tx,
         signer: keypair,
+        options: { showEvents: true },
     });
 
     const networkNodeEvent = extractEvent<{ network_node_id: string; owner_cap_id: string }>(

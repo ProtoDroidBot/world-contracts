@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
-import { createClient, keypairFromPrivateKey, type SuiClient } from "./client";
+import { createClient, keypairFromPrivateKey } from "./client";
 import {
     HydratedWorldConfig,
     WorldConfig,
@@ -21,7 +22,7 @@ export interface EnvConfig {
 }
 
 export interface InitializedContext {
-    client: SuiClient;
+    client: SuiJsonRpcClient;
     keypair: Ed25519Keypair;
     config: WorldConfig;
     address: string;
@@ -95,7 +96,7 @@ export function requireEnv(name: string): string {
 
 export function getEnvConfig(): EnvConfig {
     const network = (process.env.SUI_NETWORK as Network) || "localnet";
-    const rpcUrl = process.env.SUI_GRPC_URL || process.env.SUI_RPC_URL || DEFAULT_RPC_URLS[network];
+    const rpcUrl = process.env.SUI_RPC_URL || DEFAULT_RPC_URLS[network];
     const packageId = getDefaultWorldPackageId(network);
     if (!packageId) {
         throw new Error("WORLD_PACKAGE_ID is required");
@@ -124,25 +125,13 @@ export function initializeContext(network: Network, privateKey: string): Initial
     return { client, keypair, config, address };
 }
 
-export function eventTypeOf(event: { eventType?: string; type?: string }): string {
-    return event.eventType ?? event.type ?? "";
-}
-
 export function extractEvent<T = unknown>(
-    result: {
-        events?: Array<{
-            eventType?: string;
-            type?: string;
-            json?: unknown;
-            parsedJson?: unknown;
-        }> | null;
-    },
+    result: { events?: Array<{ type: string; parsedJson?: unknown }> | null | undefined },
     eventTypeSuffix: string
 ): T | null {
     const events = result.events || [];
-    const event = events.find((event) => eventTypeOf(event).endsWith(eventTypeSuffix));
-    if (!event) return null;
-    return ((event.json ?? event.parsedJson) as T | undefined) ?? ({} as T);
+    const event = events.find((event) => event.type.endsWith(eventTypeSuffix));
+    return (event?.parsedJson as T) || null;
 }
 
 export async function hydrateWorldConfig(ctx: InitializedContext): Promise<HydratedWorldConfig> {

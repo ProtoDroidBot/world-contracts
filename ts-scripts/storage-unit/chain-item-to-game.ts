@@ -1,9 +1,10 @@
 import "dotenv/config";
 import { Transaction } from "@mysten/sui/transactions";
 import { bcs } from "@mysten/sui/bcs";
+import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { getConfig, MODULES } from "../utils/config";
-import { eventTypeOf, hexToBytes } from "../utils/helper";
+import { hexToBytes } from "../utils/helper";
 import {
     CLOCK_OBJECT_ID,
     GAME_CHARACTER_ID,
@@ -20,7 +21,7 @@ import {
     initializeContext,
     requireEnv,
 } from "../utils/helper";
-import { keypairFromPrivateKey, SuiClient, signAndExecute } from "../utils/client";
+import { keypairFromPrivateKey } from "../utils/client";
 import { generateLocationProof } from "../utils/proof";
 
 async function chainItemToGame(
@@ -30,7 +31,7 @@ async function chainItemToGame(
     typeId: bigint,
     quantity: number,
     proofHex: string,
-    client: SuiClient,
+    client: SuiJsonRpcClient,
     playerKeypair: Ed25519Keypair,
     config: ReturnType<typeof getConfig>
 ) {
@@ -64,14 +65,15 @@ async function chainItemToGame(
         arguments: [tx.object(characterId), ownerCap, receipt],
     });
 
-    const result = await signAndExecute(client, {
+    const result = await client.signAndExecuteTransaction({
         transaction: tx,
         signer: playerKeypair,
+        options: { showEvents: true },
     });
     console.log("Transaction digest:", result.digest);
 
     const burnedEvent = result.events?.find((event) =>
-        eventTypeOf(event).endsWith("::inventory::ItemBurnedEvent")
+        event.type.endsWith("::inventory::ItemBurnedEvent")
     );
 
     console.log("burnedEvent:", burnedEvent);

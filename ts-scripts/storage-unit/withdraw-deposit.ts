@@ -1,12 +1,12 @@
 import "dotenv/config";
 import { Transaction } from "@mysten/sui/transactions";
+import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { getConfig, MODULES } from "../utils/config";
 import { GAME_CHARACTER_ID, STORAGE_A_ITEM_ID, ITEM_A_TYPE_ID } from "../utils/constants";
 import { getOwnerCap } from "./helper";
 import { deriveObjectId } from "../utils/derive-object-id";
 import {
-    eventTypeOf,
     getEnvConfig,
     handleError,
     hydrateWorldConfig,
@@ -15,7 +15,6 @@ import {
     requireEnv,
 } from "../utils/helper";
 import { executeSponsoredTransaction } from "../utils/transaction";
-import { SuiClient } from "../utils/client";
 
 async function withdraw(
     storageUnit: string,
@@ -24,7 +23,7 @@ async function withdraw(
     typeId: bigint,
     playerAddress: string,
     adminAddress: string,
-    client: SuiClient,
+    client: SuiJsonRpcClient,
     playerKeypair: Ed25519Keypair,
     adminKeypair: Ed25519Keypair,
     config: ReturnType<typeof getConfig>
@@ -69,12 +68,13 @@ async function withdraw(
         playerKeypair,
         adminKeypair,
         playerAddress,
-        adminAddress
+        adminAddress,
+        { showEvents: true }
     );
     console.log("Transaction digest:", result.digest);
 
     const withdrawEvent = result.events?.find((event) =>
-        eventTypeOf(event).endsWith("::inventory::ItemWithdrawnEventV2")
+        event.type.endsWith("::inventory::ItemWithdrawnEventV2")
     );
 
     if (!withdrawEvent) {

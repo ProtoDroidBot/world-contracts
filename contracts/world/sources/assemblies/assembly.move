@@ -156,6 +156,15 @@ public fun reveal_location(
 }
 
 // === View Functions ===
+/// Immutable game identity, also used by supplemental assembly records.
+public fun key(assembly: &Assembly): TenantItemId {
+    assembly.key
+}
+
+public fun type_id(assembly: &Assembly): u64 {
+    assembly.type_id
+}
+
 public fun status(assembly: &Assembly): &AssemblyStatus {
     &assembly.status
 }

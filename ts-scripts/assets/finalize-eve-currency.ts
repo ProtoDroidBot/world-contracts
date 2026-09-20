@@ -5,30 +5,30 @@
  *
  * Usage:
  *   EVE_CURRENCY_OBJECT_ID=0x... ASSETS_PACKAGE_ID=0x... npx tsx ts-scripts/assets/finalize-eve-currency.ts
- * Or set those in .env / rely on deployments/<network>/extracted-object-ids.json after extract-object-ids.
+ * Or set those in .env. Use the Currency<EVE> object ID (owner 0xc), not the Coin or other objects.
  */
 import "dotenv/config";
 import { Transaction } from "@mysten/sui/transactions";
-import { createClient, keypairFromPrivateKey, signAndExecute } from "../utils/client";
-import { loadExtractedObjectIds } from "../utils/helper";
-import type { Network } from "../utils/config";
+import { createClient, keypairFromPrivateKey } from "../utils/client";
 
 const COIN_REGISTRY_ID = "0xc";
 
 async function main() {
-    const network = (process.env.SUI_NETWORK ?? "localnet") as Network;
-    const extracted = loadExtractedObjectIds(network);
-
-    const currencyObjectId = process.env.EVE_CURRENCY_OBJECT_ID || extracted?.assets?.currencyId;
-    const packageId = process.env.ASSETS_PACKAGE_ID || extracted?.assets?.packageId;
+    const currencyObjectId = process.env.EVE_CURRENCY_OBJECT_ID;
+    const packageId = process.env.ASSETS_PACKAGE_ID;
 
     if (!currencyObjectId || !packageId) {
         console.error(
-            "Set EVE_CURRENCY_OBJECT_ID and ASSETS_PACKAGE_ID, or run extract-object-ids after deploying assets."
+            "SET the environment variables EVE_CURRENCY_OBJECT_ID and ASSETS_PACKAGE_ID."
         );
         process.exit(1);
     }
 
+    const network = (process.env.SUI_NETWORK ?? "testnet") as
+        | "localnet"
+        | "testnet"
+        | "devnet"
+        | "mainnet";
     const client = createClient(network);
     const privateKey = process.env.GOVERNOR_PRIVATE_KEY;
     if (!privateKey) {
@@ -40,12 +40,13 @@ async function main() {
 
     const coinType = `${packageId}::EVE::EVE`;
 
-    const { object } = await client.getObject({ objectId: currencyObjectId });
-    const currencyRef = {
-        objectId: object.objectId,
-        version: object.version,
-        digest: object.digest,
-    };
+    const res = await client.getObject({ id: currencyObjectId });
+    if (!res.data) {
+        console.error("Currency object not found:", currencyObjectId, res.error ?? "");
+        process.exit(1);
+    }
+    const { objectId, version, digest } = res.data;
+    const currencyRef = { objectId, version, digest };
 
     const tx = new Transaction();
     tx.setSender(sender);
@@ -55,13 +56,19 @@ async function main() {
         arguments: [tx.object(COIN_REGISTRY_ID), tx.receivingRef(currencyRef)],
     });
 
-    const result = await signAndExecute(client, {
+    const result = await client.signAndExecuteTransaction({
         transaction: tx,
         signer: keypair,
+        options: { showObjectChanges: true, showEffects: true },
     });
 
-    console.log("EVE currency finalized in CoinRegistry.");
-    console.log("Digest:", result.digest);
+    if (result.effects?.status?.status === "success") {
+        console.log("EVE currency finalized in CoinRegistry.");
+        console.log("Digest:", result.digest);
+    } else {
+        console.error("Finalize failed:", result.effects?.status);
+        process.exit(1);
+    }
 }
 
 main().catch((e) => {

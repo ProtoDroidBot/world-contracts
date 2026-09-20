@@ -18,7 +18,6 @@ import {
     NWN_ITEM_ID,
 } from "../utils/constants";
 import { deriveObjectId } from "../utils/derive-object-id";
-import { signAndExecute } from "../utils/client";
 
 async function anchorTurret(
     characterObjectId: string,
@@ -50,9 +49,10 @@ async function anchorTurret(
         arguments: [turret, tx.object(adminAcl)],
     });
 
-    const result = await signAndExecute(client, {
+    const result = await client.signAndExecuteTransaction({
         transaction: tx,
         signer: keypair,
+        options: { showEvents: true },
     });
 
     const event = extractEvent<{ turret_id: string; owner_cap_id: string; type_id: string }>(

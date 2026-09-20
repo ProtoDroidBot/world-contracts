@@ -175,6 +175,47 @@ fun verify_proximity_with_signature_proof() {
 }
 
 #[test]
+fun verify_distance_between_with_signature_proof() {
+    let mut ts = ts::begin(governor());
+    test_helpers::setup_world(&mut ts);
+    test_helpers::register_server_address(&mut ts);
+    create_storage_unit(
+        &mut ts,
+        LOCATION_HASH_PLANET_A_SYSTEM_1,
+    );
+
+    ts::next_tx(&mut ts, user_a());
+    {
+        let storage_unit = ts::take_shared<Storage>(&ts);
+        let server_registry = ts::take_shared<ServerAddressRegistry>(&ts);
+        let clock = clock::create_for_testing(ts.ctx());
+        let proof = test_helpers::construct_location_proof(LOCATION_HASH_PLANET_A_SYSTEM_1);
+        let proof_bytes = bcs::to_bytes(&proof);
+        let source_id = object::id_from_bytes(
+            x"0000000000000000000000000000000000000000000000000000000000000002",
+        );
+
+        location::verify_distance_between(
+            &storage_unit.location,
+            &storage_unit.location,
+            source_id,
+            test_helpers::get_storage_unit_id(),
+            &server_registry,
+            proof_bytes,
+            0,
+            &clock,
+            ts.ctx(),
+        );
+
+        clock.destroy_for_testing();
+        ts::return_shared(storage_unit);
+        ts::return_shared(server_registry);
+    };
+
+    ts::end(ts);
+}
+
+#[test]
 fun verify_proximity_proof_with_bytes() {
     let mut ts = ts::begin(governor());
     test_helpers::setup_world(&mut ts);

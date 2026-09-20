@@ -53,11 +53,7 @@ echo "[ci] Creating data directory..."
 mkdir -p /data/sui-localnet
 
 echo "[ci] Running sui genesis..."
-if [ "${1:-}" = "snapshot" ]; then
-  sui genesis --working-dir /data/sui-localnet --with-faucet --epoch-duration-ms 30000
-else
-  sui genesis --working-dir /data/sui-localnet --with-faucet
-fi
+sui genesis --working-dir /data/sui-localnet --with-faucet
 
 # Genesis writes fullnode.yaml; overwriting it breaks faucet tx execution on Sui 1.75.
 
@@ -144,16 +140,14 @@ ADMIN_ADDRESS=$(get_address ADMIN)
 SPONSOR_ADDRESS=$(get_address SPONSOR)
 PLAYER_ADDRESS=$(get_address PLAYER)
 PLAYER_B_ADDRESS=$(get_address PLAYER_B)
-EXCHANGE_ADDRESS=$(get_address EXCHANGE)
 GOVERNOR_PRIVATE_KEY=$(get_key GOVERNOR)
 ADMIN_PRIVATE_KEY=$(get_key ADMIN)
 SPONSOR_PRIVATE_KEY=$(get_key SPONSOR)
 PLAYER_PRIVATE_KEY=$(get_key PLAYER)
 PLAYER_B_PRIVATE_KEY=$(get_key PLAYER_B)
-EXCHANGE_PRIVATE_KEY=$(get_key EXCHANGE)
 
-for var in GOVERNOR_ADDRESS ADMIN_ADDRESS SPONSOR_ADDRESS PLAYER_ADDRESS PLAYER_B_ADDRESS EXCHANGE_ADDRESS \
-           GOVERNOR_PRIVATE_KEY ADMIN_PRIVATE_KEY SPONSOR_PRIVATE_KEY PLAYER_PRIVATE_KEY PLAYER_B_PRIVATE_KEY EXCHANGE_PRIVATE_KEY; do
+for var in GOVERNOR_ADDRESS ADMIN_ADDRESS SPONSOR_ADDRESS PLAYER_ADDRESS PLAYER_B_ADDRESS \
+           GOVERNOR_PRIVATE_KEY ADMIN_PRIVATE_KEY SPONSOR_PRIVATE_KEY PLAYER_PRIVATE_KEY PLAYER_B_PRIVATE_KEY; do
   require_val "$var" "${!var}"
 done
 
@@ -167,8 +161,6 @@ if [ -f "$APP_ENV_EXAMPLE" ]; then
       -e "s|^ADMIN_PRIVATE_KEY=.*|ADMIN_PRIVATE_KEY=$ADMIN_PRIVATE_KEY|" \
       -e "s|^PLAYER_A_PRIVATE_KEY=.*|PLAYER_A_PRIVATE_KEY=$PLAYER_PRIVATE_KEY|" \
       -e "s|^PLAYER_B_PRIVATE_KEY=.*|PLAYER_B_PRIVATE_KEY=$PLAYER_B_PRIVATE_KEY|" \
-      -e "s|^EXCHANGE_PRIVATE_KEY=.*|EXCHANGE_PRIVATE_KEY=$EXCHANGE_PRIVATE_KEY|" \
-      -e "s|^EXCHANGE_ADDRESS=.*|EXCHANGE_ADDRESS=$EXCHANGE_ADDRESS|" \
   > "$APP_ENV"
   echo "[ci] .env written."
 else
@@ -200,33 +192,10 @@ if [ $# -eq 1 ]; then
   elif [ "$1" = "snapshot" ]; then
     echo "[ci] Building snapshot image..."
 
-    echo "[ci] Switching to GOVERNOR for assets (EVE) deployment..."
-    sui client switch --address GOVERNOR >/dev/null
-    pnpm deploy-assets localnet \
-      || { echo "[ci] ERROR: failed to deploy assets / finalize EVE" >&2; exit 1; }
-
-    echo "[ci] Funding EXCHANGE with 10M EVE..."
-    RECIPIENT="$EXCHANGE_ADDRESS" AMOUNT=10000000 pnpm transfer-eve \
-      || { echo "[ci] ERROR: failed to transfer EVE to EXCHANGE" >&2; exit 1; }
-
     # create-character reads PLAYER_A/PLAYER_B from .env and seeds both characters.
     echo "[ci] Seeding characters for PLAYER and PLAYER_B..."
     DELAY_SECONDS="${DELAY_SECONDS:-3}" pnpm create-character \
       || { echo "[ci] ERROR: failed to seed player character" >&2; exit 1; }
-
-    echo "[ci] Waiting for epoch >= 1..."
-    for i in $(seq 1 60); do
-      epoch="$(curl -sf -X POST http://127.0.0.1:9000 \
-        -H "Content-Type: application/json" \
-        -d '{"jsonrpc":"2.0","id":1,"method":"suix_getLatestSuiSystemState","params":[]}' \
-        | jq -r '.result.epoch // 0')"
-      [ "$epoch" -ge 1 ] && break
-      sleep 2
-    done
-    if [ "${epoch:-0}" -lt 1 ]; then
-      echo "[ci] ERROR: timed out waiting for epoch >= 1" >&2
-      exit 1
-    fi
 
     echo "[ci] Shutting down node..."
     if kill -0 "$NODE_PID" 2>/dev/null; then

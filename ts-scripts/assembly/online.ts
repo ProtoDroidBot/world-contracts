@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { bcs } from "@mysten/sui/bcs";
 import { Transaction } from "@mysten/sui/transactions";
+import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { HydratedWorldConfig, getConfig, MODULES } from "../utils/config";
 import { deriveObjectId } from "../utils/derive-object-id";
@@ -13,13 +14,12 @@ import {
     requireEnv,
 } from "../utils/helper";
 import { devInspectMoveCallFirstReturnValueBytes } from "../utils/dev-inspect";
-import { SuiClient, signAndExecute } from "../utils/client";
 
 export async function online(
     networkObjectId: string,
     assemblyId: string,
     ownerCapId: string,
-    client: SuiClient,
+    client: SuiJsonRpcClient,
     keypair: Ed25519Keypair,
     config: HydratedWorldConfig
 ) {
@@ -54,9 +54,10 @@ export async function online(
         arguments: [tx.object(characterId), ownerCap, receipt],
     });
 
-    const result = await signAndExecute(client, {
+    const result = await client.signAndExecuteTransaction({
         transaction: tx,
         signer: keypair,
+        options: { showObjectChanges: true, showEffects: true },
     });
 
     console.log("\n Assembly brought online successfully!");
@@ -66,7 +67,7 @@ export async function online(
 
 export async function getOwnerCap(
     assemblyId: string,
-    client: SuiClient,
+    client: SuiJsonRpcClient,
     config: HydratedWorldConfig,
     senderAddress?: string
 ): Promise<string | null> {

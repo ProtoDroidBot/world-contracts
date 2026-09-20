@@ -24,7 +24,7 @@ import {
 import { deriveObjectId } from "../utils/derive-object-id";
 import { devInspectMoveCallFirstReturnValueBytes } from "../utils/dev-inspect";
 import { GAME_CHARACTER_ID, TURRET_ITEM_ID } from "../utils/constants";
-import { SuiClient } from "../utils/client";
+import type { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 
 export type TurretExtensionInfo = {
     hasExtension: boolean;
@@ -79,7 +79,7 @@ export const ReturnTargetPriorityListBcs = bcs.struct("ReturnTargetPriorityList"
  * Mandatory: always call is_extension_configured first; extension_type aborts if no extension is configured.
  */
 export async function getTurretExtensionInfo(
-    client: SuiClient,
+    client: SuiJsonRpcClient,
     worldPackageId: string,
     turretId: string
 ): Promise<TurretExtensionInfo> {
@@ -129,27 +129,12 @@ export function parseReturnPriorityList(returnBytes: Uint8Array): ReturnTargetPr
     }));
 }
 
-function parseDevInspectReturn(
-    returnBytes: Uint8Array | null | undefined
-): ReturnTargetPriorityListArg[] {
-    if (!returnBytes?.length) return [];
+function parseDevInspectReturn(returnValues: unknown): ReturnTargetPriorityListArg[] {
+    const arr = returnValues as [Uint8Array | number[], unknown][] | undefined;
+    if (!arr?.length) return [];
+    const raw = arr[0][0];
+    const returnBytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
     return parseReturnPriorityList(returnBytes);
-}
-
-async function simulatePriorityList(
-    client: SuiClient,
-    tx: Transaction,
-    sender: string
-): Promise<ReturnTargetPriorityListArg[]> {
-    tx.setSender(sender);
-    const result = await client.simulateTransaction({
-        transaction: tx,
-        include: { commandResults: true, effects: true },
-    });
-    if (result.FailedTransaction) {
-        throw new Error(`Simulation failed: ${JSON.stringify(result.FailedTransaction.status)}`);
-    }
-    return parseDevInspectReturn(result.commandResults?.[1]?.returnValues?.[0]?.bcs);
 }
 
 /**
@@ -182,7 +167,17 @@ export async function getTurretPriorityListFromWorld(
         ],
     });
 
-    return simulatePriorityList(client, tx, keypair.getPublicKey().toSuiAddress());
+    const result = await client.devInspectTransactionBlock({
+        sender: keypair.getPublicKey().toSuiAddress(),
+        transactionBlock: tx,
+    });
+
+    if (result.effects?.status?.status !== "success") {
+        const err = result.effects?.status?.error ?? result.effects?.status;
+        throw new Error(`DevInspect failed: ${JSON.stringify(err)}`);
+    }
+
+    return parseDevInspectReturn(result.results?.[1]?.returnValues);
 }
 
 /**
@@ -220,7 +215,15 @@ export async function getTurretPriorityList(
             ],
         });
 
-        return simulatePriorityList(client, tx, keypair.getPublicKey().toSuiAddress());
+        const result = await client.devInspectTransactionBlock({
+            sender: keypair.getPublicKey().toSuiAddress(),
+            transactionBlock: tx,
+        });
+        if (result.effects?.status?.status !== "success") {
+            const err = result.effects?.status?.error ?? result.effects?.status;
+            throw new Error(`DevInspect failed: ${JSON.stringify(err)}`);
+        }
+        return parseDevInspectReturn(result.results?.[1]?.returnValues);
     }
 
     return getTurretPriorityListFromWorld(turretId, characterId, candidates, ctx);

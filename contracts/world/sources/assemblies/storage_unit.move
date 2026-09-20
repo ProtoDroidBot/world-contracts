@@ -343,6 +343,44 @@ public fun deposit_to_open_inventory<Auth: drop>(
     );
 }
 
+/// Extension-only deposit of an item withdrawn from another Storage Unit.
+///
+/// The ordinary deposit helpers deliberately require `item.parent_id()` to be
+/// this Storage Unit.  A cross-owner/cross-assembly transfer must instead keep
+/// both assemblies in the same programmable transaction and name the source
+/// object explicitly.  Only the configured extension can construct its
+/// witness, so an arbitrary caller cannot relabel an Item's custody origin.
+public fun deposit_external_to_open_inventory<Auth: drop>(
+    storage_unit: &mut StorageUnit,
+    source_storage_unit: &StorageUnit,
+    character: &Character,
+    item: Item,
+    _: Auth,
+    _: &mut TxContext,
+) {
+    let storage_unit_id = object::id(storage_unit);
+    assert!(
+        storage_unit.extension.contains(&type_name::with_defining_ids<Auth>()),
+        EExtensionNotAuthorized,
+    );
+    assert!(storage_unit.status.is_online(), ENotOnline);
+    assert!(source_storage_unit.status.is_online(), ENotOnline);
+    assert!(inventory::tenant(&item) == storage_unit.key.tenant(), ETenantMismatch);
+    assert!(source_storage_unit.key.tenant() == storage_unit.key.tenant(), ETenantMismatch);
+    assert!(inventory::parent_id(&item) == object::id(source_storage_unit), EItemParentMismatch);
+
+    ensure_open_inventory(storage_unit);
+    let key = open_storage_key(storage_unit);
+    let inventory = df::borrow_mut<ID, Inventory>(&mut storage_unit.id, key);
+    inventory.deposit_item(
+        storage_unit_id,
+        storage_unit.key,
+        key,
+        character,
+        item,
+    );
+}
+
 /// Extension-only withdraw from open storage. Only the registered extension can call this.
 /// Aborts with EOpenStorageNotInitialized if open storage has never been used (no prior deposit_to_open_inventory).
 public fun withdraw_from_open_inventory<Auth: drop>(

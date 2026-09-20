@@ -17,13 +17,18 @@ export type ExtractedObjectIds = {
         extensionConfigId: string;
         adminCapId?: string;
     };
-    assets?: {
-        packageId: string;
-        currencyId: string;
-        treasuryId: string;
-        adminCapId: string;
-        metadataCapId: string;
+    features?: {
+        npc: FeaturePackageIds;
+        catapult: FeaturePackageIds;
+        smartIndustry: FeaturePackageIds;
+        transponder: FeaturePackageIds;
+        assemblyAccess: FeaturePackageIds;
     };
+};
+
+export type FeaturePackageIds = {
+    packageId: string;
+    registryId: string;
 };
 
 export type WorldConfig = {
@@ -35,7 +40,6 @@ export type HydratedWorldConfig = WorldConfig;
 
 export type Network = "localnet" | "testnet" | "devnet" | "mainnet";
 
-/** Public fullnode gRPC base URLs. JSON-RPC is deprecated. */
 export const DEFAULT_RPC_URLS: Record<Network, string> = {
     localnet: "http://127.0.0.1:9000",
     testnet: "https://fullnode.testnet.sui.io:443",
@@ -44,7 +48,7 @@ export const DEFAULT_RPC_URLS: Record<Network, string> = {
 };
 
 export function getConfig(network: Network = "localnet"): WorldConfig {
-    const url = process.env.SUI_GRPC_URL || process.env.SUI_RPC_URL || DEFAULT_RPC_URLS[network];
+    const url = process.env.SUI_RPC_URL || DEFAULT_RPC_URLS[network];
     const packageId = process.env.WORLD_PACKAGE_ID || "";
 
     return {
@@ -71,8 +75,10 @@ export const MODULES = {
     CHARACTER: "character",
     NETWORK_NODE: "network_node",
     ASSEMBLY: "assembly",
+    SMART_INDUSTRY: "smart_industry",
     STORAGE_UNIT: "storage_unit",
     GATE: "gate",
+    CATAPULT: "catapult",
     TURRET: "turret",
     FUEL: "fuel",
     ENERGY: "energy",

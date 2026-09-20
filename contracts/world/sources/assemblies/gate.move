@@ -72,6 +72,10 @@ const EExtensionConfigFrozen: vector<u8> = b"Extension configuration is frozen";
 const EExtensionNotConfigured: vector<u8> = b"Extension must be configured before freezing";
 #[error(code = 19)]
 const ENoExtensionToRevoke: vector<u8> = b"No extension authorization to revoke";
+#[error(code = 20)]
+const EGateSelfLink: vector<u8> = b"A gate cannot link to itself";
+#[error(code = 21)]
+const EGateTenantMismatch: vector<u8> = b"Gates belong to different tenants";
 
 // === Structs ===
 public struct GateConfig has key {
@@ -256,28 +260,12 @@ public fun link_gates(
     // TODO: Remove admin_acl once a location service is exposed for signed server proofs.
     // Until then, this txn must be an authorized sponsored transaction.
     admin_acl.verify_sponsor(ctx);
-    let source_gate_id = object::id(source_gate);
-    let destination_gate_id = object::id(destination_gate);
+    validate_gate_link(source_gate, destination_gate, source_gate_owner_cap, destination_gate_owner_cap);
 
-    // Verify authorization
-    assert!(access::is_authorized(source_gate_owner_cap, source_gate_id), EGateNotAuthorized);
-    assert!(
-        access::is_authorized(destination_gate_owner_cap, destination_gate_id),
-        EGateNotAuthorized,
-    );
-
-    // Verify gates are not already linked
-    assert!(
-        option::is_none(&source_gate.linked_gate_id) && option::is_none(&destination_gate.linked_gate_id),
-        EGatesAlreadyLinked,
-    );
-
-    // Verify gates are the same type
-    assert!(source_gate.type_id == destination_gate.type_id, EGateTypeMismatch);
-
-    // Verify distance using location proof
+    // Bind the signed distance to these exact Gate objects and both committed locations.
     verify_gates_within_range(
         source_gate,
+        destination_gate,
         server_registry,
         gate_config,
         distance_proof,
@@ -285,16 +273,7 @@ public fun link_gates(
         ctx,
     );
 
-    // Link the gates
-    source_gate.linked_gate_id = option::some(destination_gate_id);
-    destination_gate.linked_gate_id = option::some(source_gate_id);
-
-    event::emit(GateLinkedEvent {
-        source_gate_id,
-        source_gate_key: source_gate.key,
-        destination_gate_id,
-        destination_gate_key: destination_gate.key,
-    });
+    link(source_gate, destination_gate);
 }
 
 // TODO:  Should we allow this ?
@@ -526,6 +505,14 @@ public fun gate_config_id(config: &GateConfig): ID {
 
 public fun id(gate: &Gate): ID {
     object::id(gate)
+}
+
+public fun key(gate: &Gate): TenantItemId {
+    gate.key
+}
+
+public fun type_id(gate: &Gate): u64 {
+    gate.type_id
 }
 
 public fun jump_permit_id(permit: &JumpPermit): ID {
@@ -788,8 +775,9 @@ public fun unlink_gates_by_admin(
     unlink(source_gate, destination_gate);
 }
 
-// === Package Functions ===
-public(package) fun max_distance(gate_config: &GateConfig, type_id: u64): u64 {
+// === View Functions ===
+/// Returns the configured maximum jump distance for a Gate type.
+public fun max_distance(gate_config: &GateConfig, type_id: u64): u64 {
     assert!(type_id != 0, EGateTypeIdEmpty);
     if (gate_config.max_distance_by_type.contains(type_id)) {
         *gate_config.max_distance_by_type.borrow(type_id)
@@ -832,22 +820,57 @@ fun release_energy_by_type(
 /// Verifies that two gates are within the maximum allowed distance using a location proof.
 fun verify_gates_within_range(
     source_gate: &Gate,
+    destination_gate: &Gate,
     server_registry: &ServerAddressRegistry,
     gate_config: &GateConfig,
     distance_proof: vector<u8>,
-    _clock: &Clock,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     let max_distance = max_distance(gate_config, source_gate.type_id);
+    location::verify_distance_between(
+        &source_gate.location,
+        &destination_gate.location,
+        object::id(source_gate),
+        object::id(destination_gate),
+        server_registry,
+        distance_proof,
+        max_distance,
+        clock,
+        ctx,
+    );
+}
 
-    source_gate
-        .location
-        .verify_distance(
-            server_registry,
-            distance_proof,
-            max_distance,
-            ctx,
-        );
+fun validate_gate_link(
+    source_gate: &Gate,
+    destination_gate: &Gate,
+    source_gate_owner_cap: &OwnerCap<Gate>,
+    destination_gate_owner_cap: &OwnerCap<Gate>,
+) {
+    let source_gate_id = object::id(source_gate);
+    let destination_gate_id = object::id(destination_gate);
+    assert!(source_gate_id != destination_gate_id, EGateSelfLink);
+    assert!(access::is_authorized(source_gate_owner_cap, source_gate_id), EGateNotAuthorized);
+    assert!(access::is_authorized(destination_gate_owner_cap, destination_gate_id), EGateNotAuthorized);
+    assert!(option::is_none(&source_gate.linked_gate_id) &&
+        option::is_none(&destination_gate.linked_gate_id), EGatesAlreadyLinked);
+    assert!(!source_gate.status.is_online() && !destination_gate.status.is_online(), EGateOnline);
+    assert!(in_game_id::tenant(&source_gate.key) == in_game_id::tenant(&destination_gate.key),
+        EGateTenantMismatch);
+    assert!(source_gate.type_id == destination_gate.type_id, EGateTypeMismatch);
+}
+
+fun link(source_gate: &mut Gate, destination_gate: &mut Gate) {
+    let source_gate_id = object::id(source_gate);
+    let destination_gate_id = object::id(destination_gate);
+    source_gate.linked_gate_id = option::some(destination_gate_id);
+    destination_gate.linked_gate_id = option::some(source_gate_id);
+    event::emit(GateLinkedEvent {
+        source_gate_id,
+        source_gate_key: source_gate.key,
+        destination_gate_id,
+        destination_gate_key: destination_gate.key,
+    });
 }
 
 fun compute_route_hash(gate_a_id: ID, gate_b_id: ID): vector<u8> {
@@ -1004,6 +1027,33 @@ fun init(ctx: &mut TxContext) {
 #[test_only]
 public fun init_for_testing(ctx: &mut TxContext) {
     init(ctx);
+}
+
+#[test_only]
+public fun link_gates_for_testing(
+    source_gate: &mut Gate,
+    destination_gate: &mut Gate,
+    gate_config: &GateConfig,
+    server_registry: &ServerAddressRegistry,
+    admin_acl: &AdminACL,
+    source_gate_owner_cap: &OwnerCap<Gate>,
+    destination_gate_owner_cap: &OwnerCap<Gate>,
+    distance_proof: vector<u8>,
+    ctx: &mut TxContext,
+) {
+    admin_acl.verify_sponsor(ctx);
+    validate_gate_link(source_gate, destination_gate, source_gate_owner_cap, destination_gate_owner_cap);
+    location::verify_distance_between_without_signature(
+        &source_gate.location,
+        &destination_gate.location,
+        object::id(source_gate),
+        object::id(destination_gate),
+        server_registry,
+        distance_proof,
+        max_distance(gate_config, source_gate.type_id),
+        ctx,
+    );
+    link(source_gate, destination_gate);
 }
 
 #[test_only]

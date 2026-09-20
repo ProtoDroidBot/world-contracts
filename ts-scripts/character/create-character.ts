@@ -7,7 +7,7 @@ import {
     getEnvConfig,
     requireEnv,
 } from "../utils/helper";
-import { keypairFromPrivateKey, signAndExecute } from "../utils/client";
+import { keypairFromPrivateKey } from "../utils/client";
 import { MODULES } from "../utils/config";
 import { deriveObjectId } from "../utils/derive-object-id";
 import { GAME_CHARACTER_B_ID, GAME_CHARACTER_C_ID, GAME_CHARACTER_ID } from "../utils/constants";
@@ -54,9 +54,10 @@ async function createCharacter(
         arguments: [character, tx.object(adminAcl)],
     });
 
-    const result = await signAndExecute(client, {
+    const result = await client.signAndExecuteTransaction({
         transaction: tx,
         signer: keypair,
+        options: { showObjectChanges: true },
     });
 
     console.log("Transaction digest:", result.digest);
