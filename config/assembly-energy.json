@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "clientBuild": 3502403,
+  "assemblies": [
+    { "typeID": 77917, "name": "Heavy Storage", "energyRequired": 500 },
+    { "typeID": 84955, "name": "Heavy Gate", "energyRequired": 950 },
+    { "typeID": 87119, "name": "Mini Printer", "energyRequired": 50 },
+    { "typeID": 87120, "name": "Heavy Printer", "energyRequired": 250 },
+    { "typeID": 88063, "name": "Refinery", "energyRequired": 100 },
+    { "typeID": 88064, "name": "Heavy Refinery", "energyRequired": 200 },
+    { "typeID": 88067, "name": "Printer", "energyRequired": 100 },
+    { "typeID": 88068, "name": "Assembler", "energyRequired": 200 },
+    { "typeID": 88069, "name": "Mini Berth", "energyRequired": 100 },
+    { "typeID": 88070, "name": "Berth", "energyRequired": 200 },
+    { "typeID": 88071, "name": "Heavy Berth", "energyRequired": 300 },
+    { "typeID": 88082, "name": "Mini Storage", "energyRequired": 50 },
+    { "typeID": 88083, "name": "Storage", "energyRequired": 100 },
+    { "typeID": 88086, "name": "Mini Gate", "energyRequired": 0 },
+    { "typeID": 88092, "name": "Network Node", "energyRequired": 0 },
+    { "typeID": 88093, "name": "Shelter", "energyRequired": 0 },
+    { "typeID": 88094, "name": "Heavy Shelter", "energyRequired": 0 },
+    { "typeID": 90184, "name": "Relay", "energyRequired": 1 },
+    { "typeID": 91871, "name": "Nest", "energyRequired": 0 },
+    { "typeID": 91978, "name": "Nursery", "energyRequired": 100 },
+    { "typeID": 92279, "name": "Mini Turret", "energyRequired": 10 },
+    { "typeID": 92401, "name": "Turret", "energyRequired": 20 },
+    { "typeID": 92404, "name": "Heavy Turret", "energyRequired": 40 },
+    { "typeID": 95627, "name": "Mini Catapult", "energyRequired": 0 },
+    { "typeID": 95677, "name": "Heavy Catapult", "energyRequired": 0 }
+  ]
+}

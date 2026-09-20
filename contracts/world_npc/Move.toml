@@ -1,0 +1,11 @@
+[package]
+name = "world_npc"
+edition = "2024.beta"
+
+[dependencies]
+world = { local = "../world" }
+
+[environments]
+testnet_internal = "4c78adac"
+testnet_utopia = "4c78adac"
+testnet_stillness = "4c78adac"
