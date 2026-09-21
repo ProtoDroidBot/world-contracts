@@ -19,8 +19,8 @@ commands=(
   "withdraw-deposit"
   "chain-item-to-game"
   "create-gates"
-  "online-gates"
   "link-gates"
+  "online-gates"
   "jump"
   "configure-builder-extension-rules"
   "authorise-gate"
@@ -58,4 +58,3 @@ done
 
 echo
 echo "Done."
-

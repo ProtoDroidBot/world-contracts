@@ -21,13 +21,13 @@ When debugging on-chain transactions, the source code is not available by defaul
 For a faster setup, you can use the automated script that handles steps 1-3:
 
 ```bash
-npm run debug:prepare <TRANSACTION_DIGEST>
+pnpm debug:prepare <TRANSACTION_DIGEST>
 ```
 
 For example:
 
 ```bash
-npm run debug:prepare 3zHqC9NSHuY2rpMeDx5VxzsZibgNipvJkWzgFw7pfRgW
+pnpm debug:prepare 3zHqC9NSHuY2rpMeDx5VxzsZibgNipvJkWzgFw7pfRgW
 ```
 
 This script will:
@@ -63,10 +63,18 @@ sui replay --trace --digest 3zHqC9NSHuY2rpMeDx5VxzsZibgNipvJkWzgFw7pfRgW
 Build your Move package to generate debugging metadata:
 
 ```bash
-sui move build
+sui move build --path contracts/world
 ```
 
 This creates a `build` directory in your package (e.g., `contracts/world/build/World/`) containing all the debugging metadata needed for source-level debugging.
+
+The command and artifact path must match the package that actually failed. The
+`npc`, `assembly_access`, `catapult`, `smart_industry`, and `transponder`
+modules are published from separate `contracts/world_*` packages; do not copy
+the base `World` build when the replayed package ID is a feature package. Build
+that feature directory, inspect its generated `build/` package name, and copy
+that directory to the matching on-chain package-ID folder. See
+[Package topology and deployment identity](package-topology.md).
 
 ### Step 3: Copy Build Artifacts to Replay Directory
 

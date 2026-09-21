@@ -7,7 +7,7 @@ use world::{
     access::AdminACL,
     character::{Self, Character},
     object_registry::ObjectRegistry,
-    test_helpers::{Self, admin, governor, tenant, user_a, user_b},
+    test_helpers::{Self, admin, governor, tenant, user_a, user_b}
 };
 use world_npc::npc::{Self, NpcProfile, NpcRegistry};
 use world_transponder::transponder::{Self, TransponderCommitment, TransponderRegistry};
@@ -87,12 +87,18 @@ fun author_tribe(scenario: &mut ts::Scenario, character_id: ID): ID {
     let mut registry = ts::take_shared<ObjectRegistry>(scenario);
     let mut transponder_registry = ts::take_shared<TransponderRegistry>(scenario);
     let character = ts::take_shared_by_id<Character>(scenario, character_id);
-    let record_id = object::id_from_address(derived_object::derive_address(
-        object::id(&transponder_registry),
-        transponder::tribe_scope_key(tenant(), TRIBE),
-    ));
+    let record_id = object::id_from_address(
+        derived_object::derive_address(
+            object::id(&transponder_registry),
+            transponder::tribe_scope_key(tenant(), TRIBE),
+        ),
+    );
     transponder::author_for_tribe(
-        &mut registry, &mut transponder_registry, &character, first(), scenario.ctx(),
+        &mut registry,
+        &mut transponder_registry,
+        &character,
+        first(),
+        scenario.ctx(),
     );
     ts::return_shared(character);
     ts::return_shared(registry);
@@ -217,12 +223,19 @@ fun faction_wallet_authors_and_rotates_a_deterministic_record() {
     let mut transponder_registry = ts::take_shared<TransponderRegistry>(&scenario);
     let character = ts::take_shared_by_id<Character>(&scenario, character_id);
     let profile = ts::take_shared_by_id<NpcProfile>(&scenario, profile_id);
-    let record_id = object::id_from_address(derived_object::derive_address(
-        object::id(&transponder_registry),
-        transponder::faction_scope_key(tenant(), b"500012-none".to_string()),
-    ));
+    let record_id = object::id_from_address(
+        derived_object::derive_address(
+            object::id(&transponder_registry),
+            transponder::faction_scope_key(tenant(), b"500012-none".to_string()),
+        ),
+    );
     transponder::author_for_faction(
-        &mut registry, &mut transponder_registry, &character, &profile, first(), scenario.ctx(),
+        &mut registry,
+        &mut transponder_registry,
+        &character,
+        &profile,
+        first(),
+        scenario.ctx(),
     );
     ts::return_shared(character);
     ts::return_shared(profile);
@@ -253,7 +266,12 @@ fun another_wallet_cannot_author_a_faction_record() {
     let character = ts::take_shared_by_id<Character>(&scenario, character_id);
     let profile = ts::take_shared_by_id<NpcProfile>(&scenario, profile_id);
     transponder::author_for_faction(
-        &mut registry, &mut transponder_registry, &character, &profile, first(), scenario.ctx(),
+        &mut registry,
+        &mut transponder_registry,
+        &character,
+        &profile,
+        first(),
+        scenario.ctx(),
     );
     abort 0
 }
@@ -276,7 +294,12 @@ fun retired_npc_profile_cannot_author_a_faction_record() {
     let character = ts::take_shared_by_id<Character>(&scenario, character_id);
     let profile = ts::take_shared_by_id<NpcProfile>(&scenario, profile_id);
     transponder::author_for_faction(
-        &mut registry, &mut transponder_registry, &character, &profile, first(), scenario.ctx(),
+        &mut registry,
+        &mut transponder_registry,
+        &character,
+        &profile,
+        first(),
+        scenario.ctx(),
     );
     abort 0
 }
@@ -292,7 +315,11 @@ fun rejects_non_32_byte_commitments() {
     let mut transponder_registry = ts::take_shared<TransponderRegistry>(&scenario);
     let character = ts::take_shared_by_id<Character>(&scenario, character_id);
     transponder::author_for_tribe(
-        &mut registry, &mut transponder_registry, &character, x"00", scenario.ctx(),
+        &mut registry,
+        &mut transponder_registry,
+        &character,
+        x"00",
+        scenario.ctx(),
     );
     abort 0
 }

@@ -18,7 +18,7 @@ use world::{
     character::Character,
     in_game_id,
     object_registry::ObjectRegistry,
-    storage_unit::{Self, StorageUnit},
+    storage_unit::{Self, StorageUnit}
 };
 use world_npc::npc::NpcProfile;
 
@@ -31,7 +31,8 @@ const EGrantIdInvalid: vector<u8> = b"Access grant ID must be exactly 16 bytes";
 #[error(code = 3)]
 const EPrincipalInvalid: vector<u8> = b"Access principal kind or identifier is invalid";
 #[error(code = 4)]
-const ECapabilitiesInvalid: vector<u8> = b"Access capability mask is empty or contains unknown bits";
+const ECapabilitiesInvalid: vector<u8> =
+    b"Access capability mask is empty or contains unknown bits";
 #[error(code = 5)]
 const EExpiryInvalid: vector<u8> = b"Access grant expiry is invalid";
 #[error(code = 6)]
@@ -43,9 +44,11 @@ const ESubjectUnauthorized: vector<u8> = b"Transaction sender is not the access 
 #[error(code = 9)]
 const EStaleRevision: vector<u8> = b"Access policy or grant revision changed; read and retry";
 #[error(code = 10)]
-const ECustodyDelegationForbidden: vector<u8> = b"Inventory custody capabilities must be issued directly by the assembly owner";
+const ECustodyDelegationForbidden: vector<u8> =
+    b"Inventory custody capabilities must be issued directly by the assembly owner";
 #[error(code = 11)]
-const EStorageBindingMismatch: vector<u8> = b"Storage Unit does not match its assembly access policy";
+const EStorageBindingMismatch: vector<u8> =
+    b"Storage Unit does not match its assembly access policy";
 
 const PRINCIPAL_OWNER: u8 = 0;
 const PRINCIPAL_PLAYER: u8 = 1;
@@ -274,9 +277,20 @@ public fun delegate_by_character(
     assert!(capabilities & CAP_CUSTODY == 0, ECustodyDelegationForbidden);
     let grantor_id = in_game_id::item_id(&character.key()).to_string();
     create_grant(
-        registry, policy, grant_id, recipient_kind, recipient_id, capabilities,
-        PRINCIPAL_PLAYER, grantor_id, option::some(object::id(parent)), expires_at_ms,
-        delegable, delegation_depth, clock, ctx,
+        registry,
+        policy,
+        grant_id,
+        recipient_kind,
+        recipient_id,
+        capabilities,
+        PRINCIPAL_PLAYER,
+        grantor_id,
+        option::some(object::id(parent)),
+        expires_at_ms,
+        delegable,
+        delegation_depth,
+        clock,
+        ctx,
     );
 }
 
@@ -300,9 +314,20 @@ public fun delegate_by_npc(
     assert_delegation(policy, parent, capabilities, expires_at_ms, delegation_depth);
     assert!(capabilities & CAP_CUSTODY == 0, ECustodyDelegationForbidden);
     create_grant(
-        registry, policy, grant_id, recipient_kind, recipient_id, capabilities,
-        PRINCIPAL_NPC, profile.npc_id().to_string(), option::some(object::id(parent)),
-        expires_at_ms, delegable, delegation_depth, clock, ctx,
+        registry,
+        policy,
+        grant_id,
+        recipient_kind,
+        recipient_id,
+        capabilities,
+        PRINCIPAL_NPC,
+        profile.npc_id().to_string(),
+        option::some(object::id(parent)),
+        expires_at_ms,
+        delegable,
+        delegation_depth,
+        clock,
+        ctx,
     );
 }
 
@@ -332,7 +357,8 @@ public fun revoke_by_character(
     assert!(character.character_address() == ctx.sender(), ESubjectUnauthorized);
     let identifier = in_game_id::item_id(&character.key()).to_string();
     let issued = grant.grantor_kind == PRINCIPAL_PLAYER && grant.grantor_id == identifier;
-    let direct_recipient = grant.recipient_kind == PRINCIPAL_PLAYER && grant.recipient_id == identifier;
+    let direct_recipient =
+        grant.recipient_kind == PRINCIPAL_PLAYER && grant.recipient_id == identifier;
     assert!(issued || direct_recipient, ESubjectUnauthorized);
     revoke(policy, grant);
 }
@@ -346,10 +372,14 @@ public fun revoke_by_npc(
     ctx: &TxContext,
 ) {
     assert_revisions(policy, grant, expected_policy_revision, expected_grant_revision);
-    assert!(!profile.is_retired() && profile.wallet_address() == ctx.sender(), ESubjectUnauthorized);
+    assert!(
+        !profile.is_retired() && profile.wallet_address() == ctx.sender(),
+        ESubjectUnauthorized,
+    );
     let identifier = profile.npc_id().to_string();
     let issued = grant.grantor_kind == PRINCIPAL_NPC && grant.grantor_id == identifier;
-    let direct_recipient = grant.recipient_kind == PRINCIPAL_NPC && grant.recipient_id == identifier;
+    let direct_recipient =
+        grant.recipient_kind == PRINCIPAL_NPC && grant.recipient_id == identifier;
     assert!(issued || direct_recipient, ESubjectUnauthorized);
     revoke(policy, grant);
 }
@@ -373,8 +403,13 @@ public fun move_owned_to_open<T: key>(
     let item = storage_unit.withdraw_by_owner(character, owner_cap, type_id, quantity, ctx);
     storage_unit.deposit_to_open_inventory(character, item, AssemblyAccessWitness {}, ctx);
     emit_custody(
-        operation_id, CUSTODY_OWNED_TO_OPEN, storage_unit.id(), storage_unit.id(),
-        character.id(), type_id, quantity,
+        operation_id,
+        CUSTODY_OWNED_TO_OPEN,
+        storage_unit.id(),
+        storage_unit.id(),
+        character.id(),
+        type_id,
+        quantity,
     );
 }
 
@@ -396,13 +431,24 @@ public fun move_owned_to_open_by_npc<T: key>(
     assert!(operation_id.length() == GRANT_ID_LENGTH, EGrantIdInvalid);
     assert!(storage_unit.id() == policy.assembly_id, EStorageBindingMismatch);
     assert_npc_character_capability(
-        policy, grant, character, profile, CAP_INVENTORY_DEPOSIT, clock, ctx,
+        policy,
+        grant,
+        character,
+        profile,
+        CAP_INVENTORY_DEPOSIT,
+        clock,
+        ctx,
     );
     let item = storage_unit.withdraw_by_owner(character, owner_cap, type_id, quantity, ctx);
     storage_unit.deposit_to_open_inventory(character, item, AssemblyAccessWitness {}, ctx);
     emit_custody(
-        operation_id, CUSTODY_OWNED_TO_OPEN, storage_unit.id(), storage_unit.id(),
-        character.id(), type_id, quantity,
+        operation_id,
+        CUSTODY_OWNED_TO_OPEN,
+        storage_unit.id(),
+        storage_unit.id(),
+        character.id(),
+        type_id,
+        quantity,
     );
 }
 
@@ -422,12 +468,21 @@ public fun move_open_to_owned(
     assert!(storage_unit.id() == policy.assembly_id, EStorageBindingMismatch);
     assert_character_capability(policy, grant, character, CAP_INVENTORY_WITHDRAW, clock, ctx);
     let item = storage_unit.withdraw_from_open_inventory(
-        character, AssemblyAccessWitness {}, type_id, quantity, ctx,
+        character,
+        AssemblyAccessWitness {},
+        type_id,
+        quantity,
+        ctx,
     );
     storage_unit.deposit_to_owned(character, item, AssemblyAccessWitness {}, ctx);
     emit_custody(
-        operation_id, CUSTODY_OPEN_TO_OWNED, storage_unit.id(), storage_unit.id(),
-        character.id(), type_id, quantity,
+        operation_id,
+        CUSTODY_OPEN_TO_OWNED,
+        storage_unit.id(),
+        storage_unit.id(),
+        character.id(),
+        type_id,
+        quantity,
     );
 }
 
@@ -447,15 +502,30 @@ public fun move_open_to_owned_by_npc(
     assert!(operation_id.length() == GRANT_ID_LENGTH, EGrantIdInvalid);
     assert!(storage_unit.id() == policy.assembly_id, EStorageBindingMismatch);
     assert_npc_character_capability(
-        policy, grant, character, profile, CAP_INVENTORY_WITHDRAW, clock, ctx,
+        policy,
+        grant,
+        character,
+        profile,
+        CAP_INVENTORY_WITHDRAW,
+        clock,
+        ctx,
     );
     let item = storage_unit.withdraw_from_open_inventory(
-        character, AssemblyAccessWitness {}, type_id, quantity, ctx,
+        character,
+        AssemblyAccessWitness {},
+        type_id,
+        quantity,
+        ctx,
     );
     storage_unit.deposit_to_owned(character, item, AssemblyAccessWitness {}, ctx);
     emit_custody(
-        operation_id, CUSTODY_OPEN_TO_OWNED, storage_unit.id(), storage_unit.id(),
-        character.id(), type_id, quantity,
+        operation_id,
+        CUSTODY_OPEN_TO_OWNED,
+        storage_unit.id(),
+        storage_unit.id(),
+        character.id(),
+        type_id,
+        quantity,
     );
 }
 
@@ -479,20 +549,43 @@ public fun move_open_between_storage_units(
     assert!(source.id() == source_policy.assembly_id, EStorageBindingMismatch);
     assert!(destination.id() == destination_policy.assembly_id, EStorageBindingMismatch);
     assert_character_capability(
-        source_policy, source_grant, character, CAP_INVENTORY_WITHDRAW, clock, ctx,
+        source_policy,
+        source_grant,
+        character,
+        CAP_INVENTORY_WITHDRAW,
+        clock,
+        ctx,
     );
     assert_character_capability(
-        destination_policy, destination_grant, character, CAP_INVENTORY_DEPOSIT, clock, ctx,
+        destination_policy,
+        destination_grant,
+        character,
+        CAP_INVENTORY_DEPOSIT,
+        clock,
+        ctx,
     );
     let item = source.withdraw_from_open_inventory(
-        character, AssemblyAccessWitness {}, type_id, quantity, ctx,
+        character,
+        AssemblyAccessWitness {},
+        type_id,
+        quantity,
+        ctx,
     );
     destination.deposit_external_to_open_inventory(
-        source, character, item, AssemblyAccessWitness {}, ctx,
+        source,
+        character,
+        item,
+        AssemblyAccessWitness {},
+        ctx,
     );
     emit_custody(
-        operation_id, CUSTODY_OPEN_TO_OPEN, source.id(), destination.id(),
-        character.id(), type_id, quantity,
+        operation_id,
+        CUSTODY_OPEN_TO_OPEN,
+        source.id(),
+        destination.id(),
+        character.id(),
+        type_id,
+        quantity,
     );
 }
 
@@ -516,20 +609,45 @@ public fun move_open_between_storage_units_by_npc(
     assert!(source.id() == source_policy.assembly_id, EStorageBindingMismatch);
     assert!(destination.id() == destination_policy.assembly_id, EStorageBindingMismatch);
     assert_npc_character_capability(
-        source_policy, source_grant, character, profile, CAP_INVENTORY_WITHDRAW, clock, ctx,
+        source_policy,
+        source_grant,
+        character,
+        profile,
+        CAP_INVENTORY_WITHDRAW,
+        clock,
+        ctx,
     );
     assert_npc_character_capability(
-        destination_policy, destination_grant, character, profile, CAP_INVENTORY_DEPOSIT, clock, ctx,
+        destination_policy,
+        destination_grant,
+        character,
+        profile,
+        CAP_INVENTORY_DEPOSIT,
+        clock,
+        ctx,
     );
     let item = source.withdraw_from_open_inventory(
-        character, AssemblyAccessWitness {}, type_id, quantity, ctx,
+        character,
+        AssemblyAccessWitness {},
+        type_id,
+        quantity,
+        ctx,
     );
     destination.deposit_external_to_open_inventory(
-        source, character, item, AssemblyAccessWitness {}, ctx,
+        source,
+        character,
+        item,
+        AssemblyAccessWitness {},
+        ctx,
     );
     emit_custody(
-        operation_id, CUSTODY_OPEN_TO_OPEN, source.id(), destination.id(),
-        character.id(), type_id, quantity,
+        operation_id,
+        CUSTODY_OPEN_TO_OPEN,
+        source.id(),
+        destination.id(),
+        character.id(),
+        type_id,
+        quantity,
     );
 }
 
@@ -555,7 +673,10 @@ fun create_grant(
     validate_principal(grantor_kind, &grantor_id, true);
     validate_capabilities(capabilities);
     assert!(expires_at_ms > clock::timestamp_ms(clock), EExpiryInvalid);
-    assert!((delegable && delegation_depth > 0) || (!delegable && delegation_depth == 0), EDelegationInvalid);
+    assert!(
+        (delegable && delegation_depth > 0) || (!delegable && delegation_depth == 0),
+        EDelegationInvalid,
+    );
     let policy_id = object::id(policy);
     let uid = derived_object::claim(
         &mut policy.id,
@@ -713,7 +834,10 @@ fun assert_npc_subject(
     ctx: &TxContext,
 ) {
     assert_active(grant, clock);
-    assert!(!profile.is_retired() && profile.wallet_address() == ctx.sender(), ESubjectUnauthorized);
+    assert!(
+        !profile.is_retired() && profile.wallet_address() == ctx.sender(),
+        ESubjectUnauthorized,
+    );
     assert!(
         (grant.recipient_kind == PRINCIPAL_NPC && grant.recipient_id == profile.npc_id().to_string()) ||
             (grant.recipient_kind == PRINCIPAL_FACTION &&
@@ -736,11 +860,15 @@ fun assert_grant_policy(policy: &AssemblyAccessPolicy, grant: &AssemblyAccessGra
 }
 
 fun validate_principal(kind: u8, identifier: &String, allow_owner: bool) {
-    let valid_kind = (allow_owner && kind == PRINCIPAL_OWNER) ||
+    let valid_kind =
+        (allow_owner && kind == PRINCIPAL_OWNER) ||
         kind == PRINCIPAL_PLAYER || kind == PRINCIPAL_NPC ||
         kind == PRINCIPAL_TRIBE || kind == PRINCIPAL_FACTION;
-    assert!(valid_kind && identifier.length() <= 128 &&
-        ((allow_owner && kind == PRINCIPAL_OWNER) || !identifier.is_empty()), EPrincipalInvalid);
+    assert!(
+        valid_kind && identifier.length() <= 128 &&
+        ((allow_owner && kind == PRINCIPAL_OWNER) || !identifier.is_empty()),
+        EPrincipalInvalid,
+    );
 }
 
 fun validate_capabilities(capabilities: u64) {
@@ -768,35 +896,63 @@ fun emit_custody(
 }
 
 public fun id(policy: &AssemblyAccessPolicy): ID { object::id(policy) }
+
 public fun registry_id(policy: &AssemblyAccessPolicy): ID { policy.registry_id }
+
 public fun assembly_id(policy: &AssemblyAccessPolicy): ID { policy.assembly_id }
+
 public fun owner_cap_id(policy: &AssemblyAccessPolicy): ID { policy.owner_cap_id }
+
 public fun policy_revision(policy: &AssemblyAccessPolicy): u64 { policy.revision }
 
 public fun grant_object_id(grant: &AssemblyAccessGrant): ID { object::id(grant) }
+
 public fun grant_policy_id(grant: &AssemblyAccessGrant): ID { grant.policy_id }
+
 public fun grant_assembly_id(grant: &AssemblyAccessGrant): ID { grant.assembly_id }
+
 public fun grant_identifier(grant: &AssemblyAccessGrant): vector<u8> { grant.grant_id }
+
 public fun recipient_kind(grant: &AssemblyAccessGrant): u8 { grant.recipient_kind }
+
 public fun recipient_id(grant: &AssemblyAccessGrant): String { grant.recipient_id }
+
 public fun capabilities(grant: &AssemblyAccessGrant): u64 { grant.capabilities }
+
 public fun grantor_kind(grant: &AssemblyAccessGrant): u8 { grant.grantor_kind }
+
 public fun grantor_id(grant: &AssemblyAccessGrant): String { grant.grantor_id }
+
 public fun parent_grant_id(grant: &AssemblyAccessGrant): Option<ID> { grant.parent_grant_id }
+
 public fun expires_at_ms(grant: &AssemblyAccessGrant): u64 { grant.expires_at_ms }
+
 public fun is_delegable(grant: &AssemblyAccessGrant): bool { grant.delegable }
+
 public fun delegation_depth(grant: &AssemblyAccessGrant): u8 { grant.delegation_depth }
+
 public fun grant_revision(grant: &AssemblyAccessGrant): u64 { grant.revision }
+
 public fun grant_policy_revision(grant: &AssemblyAccessGrant): u64 { grant.policy_revision }
+
 public fun is_revoked(grant: &AssemblyAccessGrant): bool { grant.revoked }
 
 public fun player_principal(): u8 { PRINCIPAL_PLAYER }
+
 public fun npc_principal(): u8 { PRINCIPAL_NPC }
+
 public fun tribe_principal(): u8 { PRINCIPAL_TRIBE }
+
 public fun faction_principal(): u8 { PRINCIPAL_FACTION }
+
 public fun gui_view_capability(): u64 { CAP_GUI_VIEW }
+
 public fun operate_capability(): u64 { CAP_OPERATE }
+
 public fun inventory_deposit_capability(): u64 { CAP_INVENTORY_DEPOSIT }
+
 public fun inventory_withdraw_capability(): u64 { CAP_INVENTORY_WITHDRAW }
+
 public fun configure_capability(): u64 { CAP_CONFIGURE }
+
 public fun manage_access_capability(): u64 { CAP_MANAGE_ACCESS }

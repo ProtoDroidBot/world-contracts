@@ -1,6 +1,8 @@
 # Transponder commitments
 
-`world::transponder` lets a tribe or NPC faction author a stable on-chain commitment to a private transponder code. It follows the same privacy boundary as an unrevealed smart-assembly location: the chain stores a 32-byte digest, not the private value.
+`world_transponder::transponder` lets a tribe or NPC faction author a stable on-chain commitment to a private transponder code. It follows the same privacy boundary as an unrevealed smart-assembly location: the chain stores a 32-byte digest, not the private value.
+
+See [Package topology and deployment identity](package-topology.md) for the split-package address model and upgrade rules.
 
 Sui state and transaction inputs are public. A plaintext code, password, salt, encryption key, or private sharing list must never be passed to a Move call. The code and its 32-byte random salt are distributed to trusted members through an off-chain encrypted channel. Members fetch the commitment and reproduce the digest locally.
 
@@ -44,11 +46,12 @@ No reveal or location-publication behavior is part of this module.
 
 ## Deployment
 
-A fresh world publish uses the world package as both call target and type origin. In an upgrade, calls target the latest compatible implementation while `TransponderScopeKey` derivation and `TransponderCommitment` type checks retain the first package that introduced the module.
+A fresh deployment publishes the module from `contracts/world_transponder`, creates a shared `TransponderRegistry`, and records the feature package as both call target and type origin in the combined `npc-deployment.json` manifest. It depends on the base world and `world_npc`; it is not part of the base-world package.
+
+In an upgrade, calls target the latest compatible transponder package while `TransponderScopeKey` derivation and `TransponderCommitment` type checks retain the first package that introduced the module. Preserve the existing registry. Changing the base-world or NPC dependency may require a compatible feature upgrade; the repository does not yet provide an automated per-feature upgrade command.
 
 Run the focused tests with:
 
 ```sh
-sui move test --path contracts/world --build-env testnet transponder
+sui move test --path contracts/world_transponder
 ```
-

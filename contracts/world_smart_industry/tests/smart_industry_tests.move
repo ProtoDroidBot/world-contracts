@@ -10,7 +10,7 @@ use world::{
     energy::EnergyConfig,
     network_node::{Self, NetworkNode},
     object_registry::ObjectRegistry,
-    test_helpers::{Self, governor, admin, user_a, tenant},
+    test_helpers::{Self, governor, admin, user_a, tenant}
 };
 use world_smart_industry::smart_industry::{Self, SmartIndustry, SmartIndustryRegistry, Snapshot};
 
@@ -27,16 +27,46 @@ fun setup(ts: &mut ts::Scenario): (ID, ID) {
     let mut registry = ts::take_shared<ObjectRegistry>(ts);
     let acl = ts::take_shared<AdminACL>(ts);
     let character = character::create_character(
-        &mut registry, &acl, 2001, tenant(), 100, user_a(), b"Industry owner".to_string(), ts.ctx(),
+        &mut registry,
+        &acl,
+        2001,
+        tenant(),
+        100,
+        user_a(),
+        b"Industry owner".to_string(),
+        ts.ctx(),
     );
     let mut node = network_node::anchor(
-        &mut registry, &character, &acl, 5000, 111000, LOCATION_HASH, 1000, 3600000, 100, ts.ctx(),
+        &mut registry,
+        &character,
+        &acl,
+        5000,
+        111000,
+        LOCATION_HASH,
+        1000,
+        3600000,
+        100,
+        ts.ctx(),
     );
     let assembly = assembly::anchor(
-        &mut registry, &mut node, &character, &acl, 1001, 8888, LOCATION_HASH, ts.ctx(),
+        &mut registry,
+        &mut node,
+        &character,
+        &acl,
+        1001,
+        8888,
+        LOCATION_HASH,
+        ts.ctx(),
     );
     let other = assembly::anchor(
-        &mut registry, &mut node, &character, &acl, 1002, 8888, LOCATION_HASH, ts.ctx(),
+        &mut registry,
+        &mut node,
+        &character,
+        &acl,
+        1002,
+        8888,
+        LOCATION_HASH,
+        ts.ctx(),
     );
     let assembly_id = object::id(&assembly);
     let other_id = object::id(&other);
@@ -51,7 +81,10 @@ fun setup(ts: &mut ts::Scenario): (ID, ID) {
 
 fun sample(quantity: u64): Snapshot {
     smart_industry::new_snapshot(
-        2001, 30000142, 9001, 60,
+        2001,
+        30000142,
+        9001,
+        60,
         vector[smart_industry::new_item_stack(10, quantity)],
         vector[smart_industry::new_item_stack(20, 2)],
         vector[smart_industry::new_recipe_slot(10, 5, 500)],
@@ -66,9 +99,12 @@ fun create_record(ts: &mut ts::Scenario, assembly_id: ID, sender: address, obser
     let acl = ts::take_shared<AdminACL>(ts);
     let mut clock = clock::create_for_testing(ts.ctx());
     clock.set_for_testing(CHAIN_TIME);
-    let expected_id = object::id_from_address(derived_object::derive_address(
-        object::id(&registry), smart_industry::new_industry_key(assembly_id),
-    ));
+    let expected_id = object::id_from_address(
+        derived_object::derive_address(
+            object::id(&registry),
+            smart_industry::new_industry_key(assembly_id),
+        ),
+    );
     smart_industry::create(&mut registry, &assembly, &acl, observed, sample(10), &clock, ts.ctx());
     clock.destroy_for_testing();
     ts::return_shared(acl);
@@ -92,7 +128,14 @@ fun sync_record(
     let mut clock = clock::create_for_testing(ts.ctx());
     clock.set_for_testing(CHAIN_TIME);
     smart_industry::sync(
-        &mut industry, &assembly, &acl, expected_revision, observed, sample(25), &clock, ts.ctx(),
+        &mut industry,
+        &assembly,
+        &acl,
+        expected_revision,
+        observed,
+        sample(25),
+        &clock,
+        ts.ctx(),
     );
     clock.destroy_for_testing();
     ts::return_shared(acl);
@@ -122,7 +165,12 @@ fun creates_deterministic_sidecar_and_replaces_snapshot() {
     assert_eq!(smart_industry::blueprint_id(industry.snapshot()), 9001);
     assert_eq!(smart_industry::run_time(industry.snapshot()), 60);
     assert_eq!(smart_industry::item_quantity(&smart_industry::inputs(industry.snapshot())[0]), 10);
-    assert_eq!(smart_industry::recipe_max_quantity(&smart_industry::blueprint_inputs(industry.snapshot())[0]), 500);
+    assert_eq!(
+        smart_industry::recipe_max_quantity(
+            &smart_industry::blueprint_inputs(industry.snapshot())[0],
+        ),
+        500,
+    );
     ts::return_shared(registry);
     ts::return_shared(industry);
 
@@ -150,13 +198,15 @@ fun status_is_derived_from_the_online_parent() {
     let energy_config = ts::take_shared<EnergyConfig>(&ts);
     let clock = clock::create_for_testing(ts.ctx());
     let (node_cap, node_receipt) = character.borrow_owner_cap<NetworkNode>(
-        ts::most_recent_receiving_ticket<OwnerCap<NetworkNode>>(&character_id), ts.ctx(),
+        ts::most_recent_receiving_ticket<OwnerCap<NetworkNode>>(&character_id),
+        ts.ctx(),
     );
     node.deposit_fuel_test(&node_cap, 1, 10, 10, &clock);
     node.online(&node_cap, &clock);
     character.return_owner_cap(node_cap, node_receipt);
     let (assembly_cap, assembly_receipt) = character.borrow_owner_cap<Assembly>(
-        ts::most_recent_receiving_ticket<OwnerCap<Assembly>>(&character_id), ts.ctx(),
+        ts::most_recent_receiving_ticket<OwnerCap<Assembly>>(&character_id),
+        ts.ctx(),
     );
     assembly.online(&mut node, &energy_config, &assembly_cap);
     character.return_owner_cap(assembly_cap, assembly_receipt);
@@ -176,7 +226,16 @@ fun status_is_derived_from_the_online_parent() {
 
 #[test]
 fun accepts_empty_facility_and_future_skew_boundary() {
-    let empty = smart_industry::new_snapshot(2001, 30000142, 0, 0, vector[], vector[], vector[], vector[]);
+    let empty = smart_industry::new_snapshot(
+        2001,
+        30000142,
+        0,
+        0,
+        vector[],
+        vector[],
+        vector[],
+        vector[],
+    );
     assert_eq!(smart_industry::blueprint_id(&empty), 0);
     assert!(smart_industry::inputs(&empty).is_empty(), 0);
     let mut ts = ts::begin(governor());
@@ -289,9 +348,14 @@ fun zero_inventory_type_rejected() {
 #[expected_failure(abort_code = smart_industry::EUnsortedTypes)]
 fun duplicate_inventory_rejected() {
     smart_industry::new_snapshot(
-        2001, 30000142, 0, 0,
+        2001,
+        30000142,
+        0,
+        0,
         vector[smart_industry::new_item_stack(10, 1), smart_industry::new_item_stack(10, 2)],
-        vector[], vector[], vector[],
+        vector[],
+        vector[],
+        vector[],
     );
 }
 
@@ -299,9 +363,14 @@ fun duplicate_inventory_rejected() {
 #[expected_failure(abort_code = smart_industry::EUnsortedTypes)]
 fun descending_inventory_rejected() {
     smart_industry::new_snapshot(
-        2001, 30000142, 0, 0,
-        vector[], vector[smart_industry::new_item_stack(20, 1), smart_industry::new_item_stack(10, 1)],
-        vector[], vector[],
+        2001,
+        30000142,
+        0,
+        0,
+        vector[],
+        vector[smart_industry::new_item_stack(20, 1), smart_industry::new_item_stack(10, 1)],
+        vector[],
+        vector[],
     );
 }
 
@@ -333,8 +402,16 @@ fun zero_recipe_quantity_rejected() {
 #[expected_failure(abort_code = smart_industry::EUnsortedTypes)]
 fun duplicate_recipe_rejected() {
     smart_industry::new_snapshot(
-        2001, 30000142, 9001, 60, vector[], vector[],
-        vector[smart_industry::new_recipe_slot(10, 1, 10), smart_industry::new_recipe_slot(10, 2, 20)],
+        2001,
+        30000142,
+        9001,
+        60,
+        vector[],
+        vector[],
+        vector[
+            smart_industry::new_recipe_slot(10, 1, 10),
+            smart_industry::new_recipe_slot(10, 2, 20),
+        ],
         vector[],
     );
 }
@@ -343,8 +420,14 @@ fun duplicate_recipe_rejected() {
 #[expected_failure(abort_code = smart_industry::EInvalidBlueprint)]
 fun recipe_without_blueprint_rejected() {
     smart_industry::new_snapshot(
-        2001, 30000142, 0, 0, vector[], vector[],
-        vector[smart_industry::new_recipe_slot(10, 1, 10)], vector[],
+        2001,
+        30000142,
+        0,
+        0,
+        vector[],
+        vector[],
+        vector[smart_industry::new_recipe_slot(10, 1, 10)],
+        vector[],
     );
 }
 
@@ -381,9 +464,15 @@ fun production_upgrade_mirrors_paid_runs_and_stop_in_same_revision() {
     let mut clock = clock::create_for_testing(ts.ctx());
     clock.set_for_testing(CHAIN_TIME);
     smart_industry::sync_with_production(
-        &mut industry, &assembly, &acl, 1, 91_000, sample(5),
+        &mut industry,
+        &assembly,
+        &acl,
+        1,
+        91_000,
+        sample(5),
         smart_industry::new_production(8, 1, 3, 0, 91_000, 151_000, b"".to_string()),
-        &clock, ts.ctx(),
+        &clock,
+        ts.ctx(),
     );
     assert!(industry.has_production(), 0);
     assert_eq!(industry.revision(), 2);
@@ -392,20 +481,35 @@ fun production_upgrade_mirrors_paid_runs_and_stop_in_same_revision() {
     assert_eq!(smart_industry::production_requested_runs(&industry.production()), 3);
     assert_eq!(smart_industry::item_quantity(&smart_industry::inputs(industry.snapshot())[0]), 5);
     smart_industry::sync_with_production(
-        &mut industry, &assembly, &acl, 2, 92_000, sample(10),
+        &mut industry,
+        &assembly,
+        &acl,
+        2,
+        92_000,
+        sample(10),
         smart_industry::new_production(8, 2, 3, 1, 151_000, 211_000, b"".to_string()),
-        &clock, ts.ctx(),
+        &clock,
+        ts.ctx(),
     );
     assert_eq!(smart_industry::production_state(&industry.production()), 2);
     assert_eq!(smart_industry::production_completed_runs(&industry.production()), 1);
     smart_industry::sync_with_production(
-        &mut industry, &assembly, &acl, 3, 93_000, sample(10),
+        &mut industry,
+        &assembly,
+        &acl,
+        3,
+        93_000,
+        sample(10),
         smart_industry::new_production(8, 3, 3, 2, 151_000, 211_000, b"DISCONTINUED".to_string()),
-        &clock, ts.ctx(),
+        &clock,
+        ts.ctx(),
     );
     assert_eq!(industry.revision(), 4);
     assert_eq!(smart_industry::production_completed_runs(&industry.production()), 2);
-    assert_eq!(smart_industry::production_stop_reason(&industry.production()), b"DISCONTINUED".to_string());
+    assert_eq!(
+        smart_industry::production_stop_reason(&industry.production()),
+        b"DISCONTINUED".to_string(),
+    );
     clock.destroy_for_testing();
     ts::return_shared(acl);
     ts::return_shared(assembly);
@@ -457,8 +561,15 @@ fun production_sync_rejects_unauthorized_writer() {
     let acl = ts::take_shared<AdminACL>(&ts);
     let clock = clock::create_for_testing(ts.ctx());
     smart_industry::sync_with_production(
-        &mut industry, &assembly, &acl, 1, 91_000, sample(5),
-        smart_industry::new_production(1, 1, 3, 0, 1, 2, b"".to_string()), &clock, ts.ctx(),
+        &mut industry,
+        &assembly,
+        &acl,
+        1,
+        91_000,
+        sample(5),
+        smart_industry::new_production(1, 1, 3, 0, 1, 2, b"".to_string()),
+        &clock,
+        ts.ctx(),
     );
     clock.destroy_for_testing();
     ts::return_shared(acl);

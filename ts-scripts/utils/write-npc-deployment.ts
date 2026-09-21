@@ -23,6 +23,15 @@ type FreshNpcDeployment = {
     accessPackageId: string;
     accessTypeOrigin: string;
     accessRegistryId: string;
+    catapultPackageId: string;
+    catapultTypeOrigin: string;
+    catapultRegistryId: string;
+    industryPackageId: string;
+    industryTypeOrigin: string;
+    industryRegistryId: string;
+    transponderPackageId: string;
+    transponderTypeOrigin: string;
+    transponderRegistryId: string;
 };
 
 export function assertPublishedModule(
@@ -52,6 +61,9 @@ export function buildFreshNpcDeployment(
     publishedWorldPackageId: string,
     publishedNpcPackageId: string,
     publishedAccessPackageId: string,
+    publishedCatapultPackageId: string,
+    publishedIndustryPackageId: string,
+    publishedTransponderPackageId: string,
 ): FreshNpcDeployment {
     const normalizedChain = String(chainId || "").trim().toLowerCase();
     if (!/^[0-9a-f]+$/.test(normalizedChain)) {
@@ -62,6 +74,18 @@ export function buildFreshNpcDeployment(
     const accessPackageId = canonicalAddress(
         publishedAccessPackageId,
         "Published assembly-access package ID",
+    );
+    const catapultPackageId = canonicalAddress(
+        publishedCatapultPackageId,
+        "Published catapult package ID",
+    );
+    const industryPackageId = canonicalAddress(
+        publishedIndustryPackageId,
+        "Published Smart Industry package ID",
+    );
+    const transponderPackageId = canonicalAddress(
+        publishedTransponderPackageId,
+        "Published transponder package ID",
     );
     if (canonicalAddress(ids.world.packageId, "Extracted world package ID") !== worldPackageId) {
         throw new Error("Publish output and extracted world IDs refer to different packages");
@@ -75,6 +99,24 @@ export function buildFreshNpcDeployment(
         accessPackageId
     ) {
         throw new Error("Publish output and extracted assembly-access IDs refer to different packages");
+    }
+    if (
+        canonicalAddress(ids.features.catapult.packageId, "Extracted catapult package ID") !==
+        catapultPackageId
+    ) {
+        throw new Error("Publish output and extracted catapult IDs refer to different packages");
+    }
+    if (
+        canonicalAddress(ids.features.smartIndustry.packageId, "Extracted Smart Industry package ID") !==
+        industryPackageId
+    ) {
+        throw new Error("Publish output and extracted Smart Industry IDs refer to different packages");
+    }
+    if (
+        canonicalAddress(ids.features.transponder.packageId, "Extracted transponder package ID") !==
+        transponderPackageId
+    ) {
+        throw new Error("Publish output and extracted transponder IDs refer to different packages");
     }
     return {
         schemaVersion: 1,
@@ -91,6 +133,24 @@ export function buildFreshNpcDeployment(
             ids.features.assemblyAccess.registryId,
             "AssemblyAccessRegistry ID",
         ),
+        catapultPackageId,
+        catapultTypeOrigin: catapultPackageId,
+        catapultRegistryId: canonicalAddress(
+            ids.features.catapult.registryId,
+            "CatapultRegistry ID",
+        ),
+        industryPackageId,
+        industryTypeOrigin: industryPackageId,
+        industryRegistryId: canonicalAddress(
+            ids.features.smartIndustry.registryId,
+            "SmartIndustryRegistry ID",
+        ),
+        transponderPackageId,
+        transponderTypeOrigin: transponderPackageId,
+        transponderRegistryId: canonicalAddress(
+            ids.features.transponder.registryId,
+            "TransponderRegistry ID",
+        ),
     };
 }
 
@@ -106,6 +166,18 @@ function main() {
         process.env.ASSEMBLY_ACCESS_PUBLISH_OUTPUT ||
             `./deployments/${network}/world_assembly_access_package.json`,
     );
+    const catapultPublishPath = resolvePublishOutputPath(
+        process.env.CATAPULT_PUBLISH_OUTPUT ||
+            `./deployments/${network}/world_catapult_package.json`,
+    );
+    const industryPublishPath = resolvePublishOutputPath(
+        process.env.SMART_INDUSTRY_PUBLISH_OUTPUT ||
+            `./deployments/${network}/world_smart_industry_package.json`,
+    );
+    const transponderPublishPath = resolvePublishOutputPath(
+        process.env.TRANSPONDER_PUBLISH_OUTPUT ||
+            `./deployments/${network}/world_transponder_package.json`,
+    );
     const publicationPath = path.resolve(
         process.env.WORLD_PUBLICATION_FILE || `./contracts/world/Pub.${network}.toml`,
     );
@@ -114,10 +186,19 @@ function main() {
     const publish = readPublishOutputFile(publishPath);
     const npcPublish = readPublishOutputFile(npcPublishPath);
     const accessPublish = readPublishOutputFile(accessPublishPath);
+    const catapultPublish = readPublishOutputFile(catapultPublishPath);
+    const industryPublish = readPublishOutputFile(industryPublishPath);
+    const transponderPublish = readPublishOutputFile(transponderPublishPath);
     const npcPublished = npcPublish.objectChanges.find(change => change.type === "published");
     const accessPublished = accessPublish.objectChanges.find(change => change.type === "published");
+    const catapultPublished = catapultPublish.objectChanges.find(change => change.type === "published");
+    const industryPublished = industryPublish.objectChanges.find(change => change.type === "published");
+    const transponderPublished = transponderPublish.objectChanges.find(change => change.type === "published");
     assertPublishedModule((npcPublished as any)?.modules, "npc", "NPC");
     assertPublishedModule((accessPublished as any)?.modules, "assembly_access", "Assembly access");
+    assertPublishedModule((catapultPublished as any)?.modules, "catapult", "Catapult");
+    assertPublishedModule((industryPublished as any)?.modules, "smart_industry", "Smart Industry");
+    assertPublishedModule((transponderPublished as any)?.modules, "transponder", "Transponder");
     const publication = fs.readFileSync(publicationPath, "utf8");
     const chain = new RegExp('^chain-id\\s*=\\s*"([0-9a-fA-F]+)"\\s*$', "m")
         .exec(publication)?.[1];
@@ -129,6 +210,9 @@ function main() {
         getPublishedPackageId(publish.objectChanges),
         getPublishedPackageId(npcPublish.objectChanges),
         getPublishedPackageId(accessPublish.objectChanges),
+        getPublishedPackageId(catapultPublish.objectChanges),
+        getPublishedPackageId(industryPublish.objectChanges),
+        getPublishedPackageId(transponderPublish.objectChanges),
     );
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     const temporaryPath = `${outputPath}.tmp-${process.pid}`;

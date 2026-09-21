@@ -21,8 +21,8 @@ commands=(
   "game-item-to-chain"
   "deposit-to-ephemeral-inventory"
   "create-gates"
-  "online-gates"
   "link-gates"
+  "online-gates"
 )
 
 echo "Seeding world on $ENV: ${#commands[@]} steps with ${DELAY_SECONDS}s delay..."
