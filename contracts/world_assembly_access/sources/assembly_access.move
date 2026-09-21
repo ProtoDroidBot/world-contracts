@@ -14,7 +14,7 @@ module world_assembly_access::assembly_access;
 use std::string::{Self, String};
 use sui::{clock::{Self, Clock}, derived_object, event};
 use world::{
-    access::{Self, OwnerCap},
+    access::{Self, OwnerCap, ServerAddressRegistry},
     character::Character,
     in_game_id,
     object_registry::ObjectRegistry,
@@ -49,6 +49,19 @@ const ECustodyDelegationForbidden: vector<u8> =
 #[error(code = 11)]
 const EStorageBindingMismatch: vector<u8> =
     b"Storage Unit does not match its assembly access policy";
+#[error(code = 12)]
+const EActionIdInvalid: vector<u8> = b"Assembly action ID must be exactly 16 bytes";
+#[error(code = 13)]
+const EActionPayloadInvalid: vector<u8> =
+    b"Assembly action type, payload, or commitment is invalid";
+#[error(code = 14)]
+const EActionExpiryInvalid: vector<u8> = b"Assembly action expiry is invalid";
+#[error(code = 15)]
+const EActionStateInvalid: vector<u8> = b"Assembly action is not in the required state";
+#[error(code = 16)]
+const EActionClaimInvalid: vector<u8> = b"Assembly action claim duration or claimant is invalid";
+#[error(code = 17)]
+const EServerUnauthorized: vector<u8> = b"Assembly action requires an authorized world server";
 
 const PRINCIPAL_OWNER: u8 = 0;
 const PRINCIPAL_PLAYER: u8 = 1;
@@ -68,6 +81,18 @@ const GRANT_ID_LENGTH: u64 = 16;
 const CUSTODY_OWNED_TO_OPEN: u8 = 1;
 const CUSTODY_OPEN_TO_OWNED: u8 = 2;
 const CUSTODY_OPEN_TO_OPEN: u8 = 3;
+const ACTION_ID_LENGTH: u64 = 16;
+const ACTION_COMMITMENT_LENGTH: u64 = 32;
+const ACTION_TYPE_MAX_LENGTH: u64 = 96;
+const ACTION_PAYLOAD_MAX_LENGTH: u64 = 16384;
+const ACTION_OUTCOME_MAX_LENGTH: u64 = 16384;
+const ACTION_MAX_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+const ACTION_MAX_CLAIM_TTL_MS: u64 = 5 * 60 * 1000;
+const ACTION_QUEUED: u8 = 0;
+const ACTION_CLAIMED: u8 = 1;
+const ACTION_FULFILLED: u8 = 2;
+const ACTION_FAILED: u8 = 3;
+const ACTION_CANCELLED: u8 = 4;
 
 public struct AssemblyAccessPolicyKey has copy, drop, store { assembly_id: ID }
 
@@ -75,6 +100,11 @@ public struct AssemblyAccessGrantKey has copy, drop, store {
     policy_id: ID,
     grant_id: vector<u8>,
 }
+
+/// Deterministic key shared by the server journal and every dApp queue. UUID
+/// bytes are used instead of an address so actions can be prepared offline and
+/// retried without creating duplicate objects.
+public struct AssemblyActionKey has copy, drop, store { action_id: vector<u8> }
 
 public struct AssemblyAccessPolicy has key {
     id: UID,
@@ -102,6 +132,30 @@ public struct AssemblyAccessGrant has key {
     revision: u64,
     policy_revision: u64,
     revoked: bool,
+}
+
+/// Authoritative cross-assembly action. The local server journal and dApp task
+/// queue are projections of this shared object, never independent queues.
+public struct AssemblyAction has key {
+    id: UID,
+    registry_id: ID,
+    action_id: vector<u8>,
+    source_assembly_id: ID,
+    target_assembly_id: ID,
+    creator: address,
+    action_type: vector<u8>,
+    payload: vector<u8>,
+    payload_commitment: vector<u8>,
+    priority: u64,
+    priority_flags: u64,
+    created_at_ms: u64,
+    expires_at_ms: u64,
+    status: u8,
+    revision: u64,
+    claimed_by: address,
+    claim_expires_at_ms: u64,
+    outcome: vector<u8>,
+    server_action: bool,
 }
 
 /// Package-owned root for deterministic access policies.
@@ -157,12 +211,41 @@ public struct AssemblyCustodyTransferred has copy, drop {
     quantity: u32,
 }
 
+public struct AssemblyActionQueued has copy, drop {
+    action_object_id: ID,
+    registry_id: ID,
+    action_id: vector<u8>,
+    source_assembly_id: ID,
+    target_assembly_id: ID,
+    creator: address,
+    action_type: vector<u8>,
+    payload_commitment: vector<u8>,
+    priority: u64,
+    priority_flags: u64,
+    created_at_ms: u64,
+    expires_at_ms: u64,
+    server_action: bool,
+}
+
+public struct AssemblyActionTransitioned has copy, drop {
+    action_object_id: ID,
+    action_id: vector<u8>,
+    actor: address,
+    status: u8,
+    revision: u64,
+    at_ms: u64,
+}
+
 public fun policy_key(assembly_id: ID): AssemblyAccessPolicyKey {
     AssemblyAccessPolicyKey { assembly_id }
 }
 
 public fun grant_key(policy_id: ID, grant_id: vector<u8>): AssemblyAccessGrantKey {
     AssemblyAccessGrantKey { policy_id, grant_id }
+}
+
+public fun action_key(action_id: vector<u8>): AssemblyActionKey {
+    AssemblyActionKey { action_id }
 }
 
 /// Establish the unique policy for any assembly type.
@@ -206,6 +289,311 @@ public fun init_for_testing(ctx: &mut TxContext) {
 public fun access_registry_id(registry: &AssemblyAccessRegistry): ID {
     object::id(registry)
 }
+
+/// Queue an owner-authored dApp action. The action is immediately shared so a
+/// server, another assembly owner, or an indexer can consume the same object.
+public fun queue_action<T: key>(
+    access_registry: &mut AssemblyAccessRegistry,
+    source_assembly_id: ID,
+    target_assembly_id: ID,
+    source_owner_cap: &OwnerCap<T>,
+    action_id: vector<u8>,
+    action_type: vector<u8>,
+    payload: vector<u8>,
+    payload_commitment: vector<u8>,
+    priority: u64,
+    priority_flags: u64,
+    expires_at_ms: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(access::is_authorized(source_owner_cap, source_assembly_id), ENotAssemblyOwner);
+    create_action(
+        access_registry,
+        source_assembly_id,
+        target_assembly_id,
+        action_id,
+        action_type,
+        payload,
+        payload_commitment,
+        priority,
+        priority_flags,
+        expires_at_ms,
+        false,
+        clock,
+        ctx,
+    );
+}
+
+/// Queue a world-observed action such as a neighboring-system scan alert.
+/// Only an address registered by the deployed world may use this path.
+public fun queue_server_action(
+    access_registry: &mut AssemblyAccessRegistry,
+    server_registry: &ServerAddressRegistry,
+    source_assembly_id: ID,
+    target_assembly_id: ID,
+    action_id: vector<u8>,
+    action_type: vector<u8>,
+    payload: vector<u8>,
+    payload_commitment: vector<u8>,
+    priority: u64,
+    priority_flags: u64,
+    expires_at_ms: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(
+        access::is_authorized_server_address(server_registry, ctx.sender()),
+        EServerUnauthorized,
+    );
+    create_action(
+        access_registry,
+        source_assembly_id,
+        target_assembly_id,
+        action_id,
+        action_type,
+        payload,
+        payload_commitment,
+        priority,
+        priority_flags,
+        expires_at_ms,
+        true,
+        clock,
+        ctx,
+    );
+}
+
+fun create_action(
+    access_registry: &mut AssemblyAccessRegistry,
+    source_assembly_id: ID,
+    target_assembly_id: ID,
+    action_id: vector<u8>,
+    action_type: vector<u8>,
+    payload: vector<u8>,
+    payload_commitment: vector<u8>,
+    priority: u64,
+    priority_flags: u64,
+    expires_at_ms: u64,
+    server_action: bool,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(action_id.length() == ACTION_ID_LENGTH, EActionIdInvalid);
+    assert!(
+        !action_type.is_empty() && action_type.length() <= ACTION_TYPE_MAX_LENGTH &&
+            payload.length() <= ACTION_PAYLOAD_MAX_LENGTH &&
+            payload_commitment.length() == ACTION_COMMITMENT_LENGTH,
+        EActionPayloadInvalid,
+    );
+    let created_at_ms = clock.timestamp_ms();
+    assert!(
+        expires_at_ms > created_at_ms && expires_at_ms - created_at_ms <= ACTION_MAX_TTL_MS,
+        EActionExpiryInvalid,
+    );
+    let uid = derived_object::claim(&mut access_registry.id, action_key(copy action_id));
+    let action_object_id = object::uid_to_inner(&uid);
+    let registry_id = object::id(access_registry);
+    let creator = ctx.sender();
+    event::emit(AssemblyActionQueued {
+        action_object_id,
+        registry_id,
+        action_id: copy action_id,
+        source_assembly_id,
+        target_assembly_id,
+        creator,
+        action_type: copy action_type,
+        payload_commitment: copy payload_commitment,
+        priority,
+        priority_flags,
+        created_at_ms,
+        expires_at_ms,
+        server_action,
+    });
+    transfer::share_object(AssemblyAction {
+        id: uid,
+        registry_id,
+        action_id,
+        source_assembly_id,
+        target_assembly_id,
+        creator,
+        action_type,
+        payload,
+        payload_commitment,
+        priority,
+        priority_flags,
+        created_at_ms,
+        expires_at_ms,
+        status: ACTION_QUEUED,
+        revision: 1,
+        claimed_by: @0x0,
+        claim_expires_at_ms: 0,
+        outcome: vector[],
+        server_action,
+    });
+}
+
+public fun claim_action<T: key>(
+    action: &mut AssemblyAction,
+    target_owner_cap: &OwnerCap<T>,
+    claim_ttl_ms: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    assert!(access::is_authorized(target_owner_cap, action.target_assembly_id), ENotAssemblyOwner);
+    claim(action, claim_ttl_ms, clock, ctx.sender());
+}
+
+public fun claim_server_action(
+    action: &mut AssemblyAction,
+    server_registry: &ServerAddressRegistry,
+    claim_ttl_ms: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    assert!(
+        access::is_authorized_server_address(server_registry, ctx.sender()),
+        EServerUnauthorized,
+    );
+    claim(action, claim_ttl_ms, clock, ctx.sender());
+}
+
+fun claim(action: &mut AssemblyAction, claim_ttl_ms: u64, clock: &Clock, actor: address) {
+    let at_ms = clock.timestamp_ms();
+    assert!(at_ms < action.expires_at_ms, EActionExpiryInvalid);
+    if (
+        action.status == ACTION_CLAIMED && action.claimed_by == actor &&
+            action.claim_expires_at_ms > at_ms
+    ) {
+        return
+    };
+    if (action.status == ACTION_CLAIMED && action.claim_expires_at_ms <= at_ms) {
+        action.status = ACTION_QUEUED;
+        action.claimed_by = @0x0;
+        action.claim_expires_at_ms = 0;
+    };
+    assert!(action.status == ACTION_QUEUED, EActionStateInvalid);
+    assert!(claim_ttl_ms > 0 && claim_ttl_ms <= ACTION_MAX_CLAIM_TTL_MS, EActionClaimInvalid);
+    action.status = ACTION_CLAIMED;
+    action.claimed_by = actor;
+    action.claim_expires_at_ms = at_ms + claim_ttl_ms;
+    action.revision = action.revision + 1;
+    emit_action_transition(action, actor, at_ms);
+}
+
+public fun release_server_action(
+    action: &mut AssemblyAction,
+    server_registry: &ServerAddressRegistry,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    assert!(
+        access::is_authorized_server_address(server_registry, ctx.sender()),
+        EServerUnauthorized,
+    );
+    assert!(
+        action.status == ACTION_CLAIMED && action.claimed_by == ctx.sender(),
+        EActionClaimInvalid,
+    );
+    action.status = ACTION_QUEUED;
+    action.claimed_by = @0x0;
+    action.claim_expires_at_ms = 0;
+    action.revision = action.revision + 1;
+    emit_action_transition(action, ctx.sender(), clock.timestamp_ms());
+}
+
+public fun complete_server_action(
+    action: &mut AssemblyAction,
+    server_registry: &ServerAddressRegistry,
+    succeeded: bool,
+    outcome: vector<u8>,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    assert!(
+        access::is_authorized_server_address(server_registry, ctx.sender()),
+        EServerUnauthorized,
+    );
+    assert!(
+        action.status == ACTION_CLAIMED && action.claimed_by == ctx.sender(),
+        EActionClaimInvalid,
+    );
+    assert!(outcome.length() <= ACTION_OUTCOME_MAX_LENGTH, EActionPayloadInvalid);
+    action.status = if (succeeded) ACTION_FULFILLED else ACTION_FAILED;
+    action.outcome = outcome;
+    action.claimed_by = @0x0;
+    action.claim_expires_at_ms = 0;
+    action.revision = action.revision + 1;
+    emit_action_transition(action, ctx.sender(), clock.timestamp_ms());
+}
+
+public fun cancel_action<T: key>(
+    action: &mut AssemblyAction,
+    source_owner_cap: &OwnerCap<T>,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    assert!(access::is_authorized(source_owner_cap, action.source_assembly_id), ENotAssemblyOwner);
+    let at_ms = clock.timestamp_ms();
+    assert!(
+        action.status == ACTION_QUEUED ||
+            (action.status == ACTION_CLAIMED && action.claim_expires_at_ms <= at_ms),
+        EActionStateInvalid,
+    );
+    action.status = ACTION_CANCELLED;
+    action.claimed_by = @0x0;
+    action.claim_expires_at_ms = 0;
+    action.revision = action.revision + 1;
+    emit_action_transition(action, ctx.sender(), at_ms);
+}
+
+fun emit_action_transition(action: &AssemblyAction, actor: address, at_ms: u64) {
+    event::emit(AssemblyActionTransitioned {
+        action_object_id: object::id(action),
+        action_id: copy action.action_id,
+        actor,
+        status: action.status,
+        revision: action.revision,
+        at_ms,
+    });
+}
+
+public fun action_id(action: &AssemblyAction): vector<u8> { action.action_id }
+
+public fun action_source(action: &AssemblyAction): ID { action.source_assembly_id }
+
+public fun action_target(action: &AssemblyAction): ID { action.target_assembly_id }
+
+public fun action_type(action: &AssemblyAction): &vector<u8> { &action.action_type }
+
+public fun action_payload(action: &AssemblyAction): &vector<u8> { &action.payload }
+
+public fun action_payload_commitment(action: &AssemblyAction): &vector<u8> {
+    &action.payload_commitment
+}
+
+public fun action_priority(action: &AssemblyAction): u64 { action.priority }
+
+public fun action_priority_flags(action: &AssemblyAction): u64 { action.priority_flags }
+
+public fun action_status(action: &AssemblyAction): u8 { action.status }
+
+public fun action_revision(action: &AssemblyAction): u64 { action.revision }
+
+public fun action_expires_at_ms(action: &AssemblyAction): u64 { action.expires_at_ms }
+
+public fun action_outcome(action: &AssemblyAction): &vector<u8> { &action.outcome }
+
+public fun action_is_server_authored(action: &AssemblyAction): bool { action.server_action }
+
+public fun action_queued_status(): u8 { ACTION_QUEUED }
+
+public fun action_claimed_status(): u8 { ACTION_CLAIMED }
+
+public fun action_fulfilled_status(): u8 { ACTION_FULFILLED }
+
+public fun action_failed_status(): u8 { ACTION_FAILED }
+
+public fun action_cancelled_status(): u8 { ACTION_CANCELLED }
 
 /// Configure a Storage Unit to accept access-checked open-inventory moves.
 public fun bind_storage_unit(

@@ -13,11 +13,13 @@ use world_assembly_access::assembly_access::{
     Self,
     AssemblyAccessGrant,
     AssemblyAccessPolicy,
-    AssemblyAccessRegistry
+    AssemblyAccessRegistry,
+    AssemblyAction
 };
 
 const CHARACTER_ITEM_ID: u32 = 1234;
 const GRANT_ID: vector<u8> = x"11111111111141118111111111111111";
+const ACTION_ID: vector<u8> = x"22222222222242228222222222222222";
 
 fun create_character(scenario: &mut ts::Scenario): ID {
     assembly_access::init_for_testing(scenario.ctx());
@@ -134,5 +136,70 @@ fun owner_grant_is_deterministic_and_recipient_can_relinquish() {
     ts::return_shared(character);
     ts::return_shared(grant);
     ts::return_shared(policy);
+    scenario.end();
+}
+
+#[test]
+fun owner_action_is_deterministic_and_claimed_from_the_shared_chain_queue() {
+    let mut scenario = ts::begin(governor());
+    test_helpers::setup_world(&mut scenario);
+    let character_id = create_character(&mut scenario);
+
+    ts::next_tx(&mut scenario, user_a());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let mut access_registry = ts::take_shared<AssemblyAccessRegistry>(&scenario);
+    let mut character = ts::take_shared_by_id<Character>(&scenario, character_id);
+    let (owner_cap, receipt) = character.borrow_owner_cap<Character>(
+        ts::most_recent_receiving_ticket<OwnerCap<Character>>(&character_id),
+        scenario.ctx(),
+    );
+    assembly_access::queue_action<Character>(
+        &mut access_registry,
+        character_id,
+        character_id,
+        &owner_cap,
+        ACTION_ID,
+        b"intelligence.remote-scan.execute",
+        b"{}",
+        x"1111111111111111111111111111111111111111111111111111111111111111",
+        100,
+        258,
+        10_000,
+        &clock,
+        scenario.ctx(),
+    );
+    let action_object_id = object::id_from_address(
+        derived_object::derive_address(
+            object::id(&access_registry),
+            assembly_access::action_key(ACTION_ID),
+        ),
+    );
+    character.return_owner_cap(owner_cap, receipt);
+    ts::return_shared(character);
+    ts::return_shared(access_registry);
+    clock.destroy_for_testing();
+
+    ts::next_tx(&mut scenario, user_a());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let mut character = ts::take_shared_by_id<Character>(&scenario, character_id);
+    let mut action = ts::take_shared_by_id<AssemblyAction>(&scenario, action_object_id);
+    let (owner_cap, receipt) = character.borrow_owner_cap<Character>(
+        ts::most_recent_receiving_ticket<OwnerCap<Character>>(&character_id),
+        scenario.ctx(),
+    );
+    assert_eq!(assembly_access::action_id(&action), ACTION_ID);
+    assert_eq!(assembly_access::action_status(&action), assembly_access::action_queued_status());
+    assembly_access::claim_action<Character>(
+        &mut action,
+        &owner_cap,
+        1_000,
+        &clock,
+        scenario.ctx(),
+    );
+    assert_eq!(assembly_access::action_status(&action), assembly_access::action_claimed_status());
+    character.return_owner_cap(owner_cap, receipt);
+    ts::return_shared(action);
+    ts::return_shared(character);
+    clock.destroy_for_testing();
     scenario.end();
 }
