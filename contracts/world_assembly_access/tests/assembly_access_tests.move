@@ -7,13 +7,13 @@ use world::{
     access::{AdminACL, OwnerCap},
     character::{Self, Character},
     object_registry::ObjectRegistry,
-    test_helpers::{Self, admin, governor, tenant, user_a},
+    test_helpers::{Self, admin, governor, tenant, user_a}
 };
 use world_assembly_access::assembly_access::{
     Self,
     AssemblyAccessGrant,
     AssemblyAccessPolicy,
-    AssemblyAccessRegistry,
+    AssemblyAccessRegistry
 };
 
 const CHARACTER_ITEM_ID: u32 = 1234;
@@ -62,10 +62,12 @@ fun owner_grant_is_deterministic_and_recipient_can_relinquish() {
         &owner_cap,
         scenario.ctx(),
     );
-    let policy_id = object::id_from_address(derived_object::derive_address(
-        object::id(&access_registry),
-        assembly_access::policy_key(character_id),
-    ));
+    let policy_id = object::id_from_address(
+        derived_object::derive_address(
+            object::id(&access_registry),
+            assembly_access::policy_key(character_id),
+        ),
+    );
     character.return_owner_cap(owner_cap, receipt);
     ts::return_shared(character);
     ts::return_shared(registry);
@@ -96,10 +98,12 @@ fun owner_grant_is_deterministic_and_recipient_can_relinquish() {
         &clock,
         scenario.ctx(),
     );
-    let grant_id = object::id_from_address(derived_object::derive_address(
-        policy_id,
-        assembly_access::grant_key(policy_id, GRANT_ID),
-    ));
+    let grant_id = object::id_from_address(
+        derived_object::derive_address(
+            policy_id,
+            assembly_access::grant_key(policy_id, GRANT_ID),
+        ),
+    );
     assert_eq!(assembly_access::policy_revision(&policy), 2);
     character.return_owner_cap(owner_cap, receipt);
     ts::return_shared(character);

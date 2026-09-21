@@ -1,6 +1,6 @@
 # NPC profiles
 
-`world::npc` adds explicit on-chain NPC identity and lifecycle state to the existing Character model. Each NPC retains a shared `character::Character` and wallet-owned `character::PlayerProfile` for compatibility, and receives a separate shared `npc::NpcProfile`. Existing Character and PlayerProfile struct layouts remain unchanged.
+`world_npc::npc` adds explicit on-chain NPC identity and lifecycle state to the existing Character model. Each NPC retains a shared `character::Character` and wallet-owned `character::PlayerProfile` for compatibility, and receives a separate shared `npc::NpcProfile`. Existing Character and PlayerProfile struct layouts remain unchanged.
 
 The profile is derived under the world ObjectRegistry using `NpcProfileKey { character_id: ID }`. This key has its own type and does not consume another ordinary `TenantItemId`. Readers can calculate its object ID from the registry, Character ID, and the NPC module's type-origin package. A dynamic field on the Character marks it as an NPC and points to that profile.
 
@@ -31,29 +31,13 @@ Deleting a Character through historical bytecode or another external administrat
 
 ## Deployment identity and upgrades
 
-A fresh world publish containing this module uses its world package ID as both the NPC call target and type origin. For an upgrade, keep the original base-world configuration and objects. The NPC call target is the latest implementation package; its type origin is the first package introducing `NpcProfile` and `NpcProfileKey`. Retain that origin across later upgrades or readers will calculate different profile IDs.
+A fresh deployment publishes `npc` from `contracts/world_npc`, not from the base world package. Its new feature-package ID is both the call target and type origin, and its initializer creates the shared `NpcRegistry`. For an upgrade, keep the original base-world configuration and objects, preserve the first NPC type origin and registry, and change only the NPC call package to the latest compatible implementation.
 
-The EveJS server reads `EVEJS_SUI_NPC_PACKAGE_ID` and `EVEJS_SUI_NPC_TYPE_ORIGIN`, or a public `npc-deployment.json` beside its synchronized `world.private.json`. `EVEJS_SUI_NPC_CONFIG_PATH` selects an explicit file. Its schema is:
+The EveJS server reads `EVEJS_SUI_NPC_PACKAGE_ID`, `EVEJS_SUI_NPC_TYPE_ORIGIN`, and `EVEJS_SUI_NPC_REGISTRY_ID`, or the NPC fields in the combined public `npc-deployment.json` beside its synchronized `world.private.json`. `EVEJS_SUI_NPC_CONFIG_PATH` selects an explicit manifest. Environment overrides take precedence per field but cannot mask malformed or mismatched manifest data. The server revalidates the deployment fingerprint before submitting a signed operation.
 
-```json
-{
-  "schemaVersion": 1,
-  "chainId": "CHAIN_IDENTIFIER",
-  "worldPackageId": "0xORIGINAL_WORLD_PACKAGE",
-  "objectRegistryId": "0xORIGINAL_REGISTRY",
-  "adminAclId": "0xORIGINAL_ACL",
-  "packageId": "0xLATEST_NPC_IMPLEMENTATION",
-  "typeOrigin": "0xFIRST_PACKAGE_CONTAINING_NPC",
-  "accessPackageId": "0xLATEST_ASSEMBLY_ACCESS_IMPLEMENTATION",
-  "accessTypeOrigin": "0xFIRST_PACKAGE_CONTAINING_ASSEMBLY_ACCESS"
-}
-```
+The version-1 manifest is an atomic five-feature manifest despite its historical filename. Current synchronization requires the complete NPC, assembly-access, catapult, Smart Industry, and transponder package/origin/registry triples. Its complete schema and upgrade invariants are documented in [Package topology and deployment identity](package-topology.md). In particular, assembly access has an independent package, type origin, and registry; it must never be inferred from the NPC package in a split deployment.
 
-Replace placeholders with verified deployment values. Base chain/package/registry/ACL values must match the synchronized world. Environment overrides take precedence per field but cannot mask malformed or mismatched file data. The conventional sibling is optional; an explicitly selected file must exist. The server revalidates the deployment fingerprint before submitting a signed operation.
-
-The assembly-access pair is optional for manifests created before that module existed, but the two fields must appear together. When absent, the server falls back to the configured NPC package for backward compatibility and chain verification fails closed if that package does not contain `assembly_access`. `EVEJS_SUI_ASSEMBLY_ACCESS_PACKAGE_ID` and `EVEJS_SUI_ASSEMBLY_ACCESS_TYPE_ORIGIN` provide the equivalent explicit overrides. Keeping the access type origin independent is required when `assembly_access` is introduced by a later package upgrade than `npc`.
-
-Keep the authoritative manifest in `deployments/localnet/npc-deployment.json`. EveJS `FrontierWorld.ps1 sync` validates and copies its public runtime fields beside `world.private.json`, retaining the original world identity. Synchronization requires canonical full-length nonzero addresses and rejects malformed or mismatched manifests. If the source is absent but a destination manifest exists, sync fails closed and preserves that file for explicit reconciliation; it will not silently delete upgrade metadata or fall back to the base package. `sync -DryRun` performs validation without changing files. Synchronization itself does not publish or upgrade contracts.
+Keep the authoritative manifest in `deployments/localnet/npc-deployment.json`. EveJS `FrontierWorld.ps1 sync` validates and copies its public runtime fields beside `world.private.json`, retaining the original world identity. Synchronization requires canonical full-length nonzero addresses and rejects malformed or mismatched manifests. If the source is absent but a destination manifest exists, sync fails closed and preserves that file for explicit reconciliation; it will not silently delete feature metadata. `sync -DryRun` performs validation without changing files. Synchronization itself does not publish or upgrade contracts.
 
 The existing `scripts/deploy-world.sh` performs a fresh publish and cleans deployment outputs. It is not an upgrade procedure and must not be used to silently replace an existing world. Base-world synchronization also hashes its original deployment/publication artifacts: preserve those and store upgrade publication metadata separately. Existing synchronization assumes its base package identifies the original Character, TenantItemId, ObjectRegistry, and AdminACL types.
 
@@ -63,29 +47,12 @@ Source edits and these settings do not deploy anything. A deployment without thi
 
 ## Verification
 
-From this world-contracts checkout, `sui move test --path contracts/world` builds and runs the Move tests without submitting a live transaction. The test coverage includes faction-wallet consistency, reserved character IDs, profile registration, lifecycle revisions/death/respawn, and retirement.
+From this world-contracts checkout, `sui move test --path contracts/world_npc` builds and runs the NPC Move tests without submitting a live transaction. The test coverage includes faction-wallet consistency, reserved character IDs, profile registration, lifecycle revisions/death/respawn, and retirement. Run it with the Sui CLI supplied by the efctl build environment so the CLI and pinned framework agree.
 
 In `EveJS-Frontier`, run `npm run build` followed by `npm run test:frontier-npc-identities` to check the server integration using an isolated game store and mocked chain clients. The deployment-config tests cover type-origin separation, base-world mismatches, malformed configuration, and changes between transaction preparation and submission. Actual publication or upgrade is an explicit deployment operation outside these tests.
 
-### Validation on 2026-09-19
+### Current Localnet audit on 2026-09-20
 
-The installed CLI was `sui 1.78.0-d8459684b41e`. The checkout's pinned framework commit `b0535f1f3a3310e71790e90d8ae4e8ca840c897e` compiled the sources, but that CLI could not execute its framework: both NPC tests and existing Character tests failed before their test bodies with `sui::funds_accumulator` / `MISSING_DEPENDENCY` / `UNEXPECTED_VERIFIER_ERROR`. This is a toolchain/framework mismatch, not a passing test run for that pinned dependency.
+The active chain is a fresh split deployment. Public RPC inspection confirmed that the configured NPC call package exists, exposes only the normalized `npc` module, and has a shared `NpcRegistry` whose exact type uses the configured NPC type origin. The NPC `UpgradeCap` also exists under the deployment admin. The authoritative and EveJS-synchronized combined manifests agree.
 
-An isolated package copy used the already-cached framework commit `25ac21790b21157a3872ffa240546a3950a371be` (2026-08-19), with `implicit-dependencies = false` and local `sui`/`std` dependencies only in the copy. Against that compatible framework, all **352 world tests passed**, including **32 NPC tests** and **18 existing Character tests**. The command was `sui move test --path <isolated-package> --build-env testnet --silence-warnings --no-lint`.
-
-The original `Move.toml` and `Move.lock` were not modified for validation, and no package was published or upgraded. Before deployment, use a CLI compatible with the chosen pinned framework and rerun the tests and chain-specific upgrade checks.
-
-### Localnet synchronization on 2026-09-19
-
-The current `sui-playground` container provides `sui 1.80.0-ceaaff1cc84c`, matching the world publication. All **352 world tests passed with the project's pinned framework** using that CLI.
-
-The active Localnet was freshly published with the NPC module already present, so no upgrade transaction was required:
-
-- Chain: `975e618c`.
-- Base world, NPC call target, and first NPC type origin: `0xb3fa0f21d69d5adc5ce4cfbf384ff4115a158161b0f52c208a261ffbfd55eca0`.
-- ObjectRegistry: `0x52621e07e445933925dea0330668741c964bda7239eae5372d693abfc094a4dd`.
-- AdminACL: `0x51d75d762ed87a01f55c6a912278158241eaf3325dcb30ab6e9200988a47dddd`.
-
-The authoritative public manifest is `deployments/localnet/npc-deployment.json`. EveJS `FrontierWorld.ps1 sync` copied it alongside the protected world configuration, then funded all 20 configured faction wallets from the synchronized admin account to the common 10 SUI target. Funding transaction `3b1SyuNkPmvK7ZDcrzrF6tZDbwPUTvheosYTuDcvW1p7` transferred 200 SUI in total; the admin already had sufficient SUI, so no faucet request was needed. A read-only repeat preview found zero under-budget wallets.
-
-EveJS `npm run frontier:npc:verify` passed against this deployment. It simulated the real server transaction builder with checks enabled, verified Character, PlayerProfile and NpcProfile types, checked faction ownership and identity events, and confirmed that simulated objects remained absent. No permanent smoke-test NPC was created, and no Localnet or EveJS restart was performed.
+Focused EveJS world-sync and feature-configuration tests passed as part of the same audit. The protected-key read-only NPC transaction simulator was not rerun from the audit sandbox because its identity could not read `world.private.json`; the ACL was not weakened. The sibling TypeScript/Move suites must be rerun inside the rebuilt efctl environment before treating the current split source as release evidence. Older 2026-09-19 monolithic-package test counts and package IDs are historical and do not validate this split deployment.

@@ -8,19 +8,21 @@ use world::{
     access::AdminACL,
     character::{Self, Character},
     in_game_id,
-    object_registry::ObjectRegistry,
+    object_registry::ObjectRegistry
 };
 
 #[error(code = 0)]
 const EInvalidNpcId: vector<u8> = b"NPC character ID is outside the reserved interval";
 #[error(code = 1)]
-const EInvalidFaction: vector<u8> = b"NPC faction string must be a lowercase ASCII slug of at most 96 bytes";
+const EInvalidFaction: vector<u8> =
+    b"NPC faction string must be a lowercase ASCII slug of at most 96 bytes";
 #[error(code = 2)]
 const ERegistryMismatch: vector<u8> = b"Character was not derived in this registry";
 #[error(code = 3)]
 const EAlreadyRegistered: vector<u8> = b"Character already has an NPC profile";
 #[error(code = 4)]
-const EFactionWalletMismatch: vector<u8> = b"Faction wallet or ACL differs from its permanent binding";
+const EFactionWalletMismatch: vector<u8> =
+    b"Faction wallet or ACL differs from its permanent binding";
 #[error(code = 5)]
 const EAdminAclMismatch: vector<u8> = b"NPC profile belongs to another AdminACL";
 #[error(code = 6)]
@@ -141,9 +143,12 @@ public fun register_profile(
     let character_key = character.key();
     let npc_id = in_game_id::item_id(&character_key);
     assert!(npc_id >= MIN_NPC_ID && npc_id <= MAX_NPC_ID, EInvalidNpcId);
-    assert!(character_id == object::id_from_address(derived_object::derive_address(
+    assert!(
+        character_id == object::id_from_address(derived_object::derive_address(
         object::id(registry), character_key,
-    )) && registry.object_exists(character_key), ERegistryMismatch);
+    )) && registry.object_exists(character_key),
+        ERegistryMismatch,
+    );
     assert!(!character.is_npc_character(), EAlreadyRegistered);
     validate_lifecycle(incarnation, active_entity_id, deaths);
     let tenant = character.tenant();
@@ -151,12 +156,15 @@ public fun register_profile(
     let wallet_address = character.character_address();
     let admin_acl_id = object::id(acl);
     let binding_key = new_faction_key(tenant, faction_key);
-    if (dynamic_field::exists_(&npc_registry.id, binding_key)) {
+    if (dynamic_field::exists(&npc_registry.id, binding_key)) {
         let binding = dynamic_field::borrow<NpcFactionKey, NpcFactionBinding>(
-            &npc_registry.id, binding_key,
+            &npc_registry.id,
+            binding_key,
         );
-        assert!(binding.wallet_address == wallet_address && binding.admin_acl_id == admin_acl_id,
-            EFactionWalletMismatch);
+        assert!(
+            binding.wallet_address == wallet_address && binding.admin_acl_id == admin_acl_id,
+            EFactionWalletMismatch,
+        );
     } else {
         dynamic_field::add(
             &mut npc_registry.id,
@@ -168,13 +176,32 @@ public fun register_profile(
     let profile_id = object::uid_to_inner(&uid);
     character::link_npc_profile_sponsored(character, profile_id, acl, ctx);
     let profile = NpcProfile {
-        id: uid, character_id, registry_id: object::id(registry), admin_acl_id,
-        tenant, npc_id: npc_id as u32, faction_key, wallet_address,
-        revision: 1, incarnation, active_entity_id, deaths, retired: false,
+        id: uid,
+        character_id,
+        registry_id: object::id(registry),
+        admin_acl_id,
+        tenant,
+        npc_id: npc_id as u32,
+        faction_key,
+        wallet_address,
+        revision: 1,
+        incarnation,
+        active_entity_id,
+        deaths,
+        retired: false,
     };
     event::emit(NpcProfileRegistered {
-        profile_id, character_id, registry_id: profile.registry_id, npc_id: profile.npc_id,
-        tenant, faction_key, wallet_address, revision: 1, incarnation, active_entity_id, deaths,
+        profile_id,
+        character_id,
+        registry_id: profile.registry_id,
+        npc_id: profile.npc_id,
+        tenant,
+        faction_key,
+        wallet_address,
+        revision: 1,
+        incarnation,
+        active_entity_id,
+        deaths,
     });
     transfer::share_object(profile);
 }
@@ -197,10 +224,27 @@ public fun create_npc_character(
     ctx: &mut TxContext,
 ): Character {
     let mut character = character::create_character(
-        registry, acl, game_character_id, tenant, tribe_id, character_address, name, ctx,
+        registry,
+        acl,
+        game_character_id,
+        tenant,
+        tribe_id,
+        character_address,
+        name,
+        ctx,
     );
-    register_profile(registry, npc_registry, &mut character, acl, faction_id, faction_string_id,
-        incarnation, active_entity_id, deaths, ctx);
+    register_profile(
+        registry,
+        npc_registry,
+        &mut character,
+        acl,
+        faction_id,
+        faction_string_id,
+        incarnation,
+        active_entity_id,
+        deaths,
+        ctx,
+    );
     character
 }
 
@@ -233,18 +277,27 @@ public fun sync_lifecycle(
     validate_lifecycle(incarnation, active_entity_id, deaths);
     assert!(incarnation >= profile.incarnation && deaths >= profile.deaths, EStaleIncarnation);
     if (incarnation == profile.incarnation) {
-        assert!(active_entity_id == profile.active_entity_id ||
-            (profile.active_entity_id > 0 && active_entity_id == 0), EInvalidLifecycle);
+        assert!(
+            active_entity_id == profile.active_entity_id ||
+            (profile.active_entity_id > 0 && active_entity_id == 0),
+            EInvalidLifecycle,
+        );
         let allowed_deaths = if (profile.active_entity_id > 0 && active_entity_id == 0) 1 else 0;
         assert!(deaths - profile.deaths <= allowed_deaths, EInvalidLifecycle);
     } else {
-        assert!(active_entity_id == 0 || active_entity_id != profile.active_entity_id, EInvalidLifecycle);
-        let completed_incarnations = incarnation - profile.incarnation +
+        assert!(
+            active_entity_id == 0 || active_entity_id != profile.active_entity_id,
+            EInvalidLifecycle,
+        );
+        let completed_incarnations =
+            incarnation - profile.incarnation +
             (if (profile.active_entity_id > 0) 1 else 0) - (if (active_entity_id > 0) 1 else 0);
         assert!(deaths - profile.deaths <= completed_incarnations, EInvalidLifecycle);
     };
-    if (profile.incarnation == incarnation && profile.active_entity_id == active_entity_id &&
-        profile.deaths == deaths) return;
+    if (
+        profile.incarnation == incarnation && profile.active_entity_id == active_entity_id &&
+        profile.deaths == deaths
+    ) return;
     profile.incarnation = incarnation;
     profile.active_entity_id = active_entity_id;
     profile.deaths = deaths;
@@ -253,7 +306,12 @@ public fun sync_lifecycle(
 }
 
 /// Permanent administrative retirement. Objects and historical counters remain intact.
-public fun retire(profile: &mut NpcProfile, acl: &AdminACL, expected_revision: u64, ctx: &TxContext) {
+public fun retire(
+    profile: &mut NpcProfile,
+    acl: &AdminACL,
+    expected_revision: u64,
+    ctx: &TxContext,
+) {
     authorize(profile, acl, expected_revision, ctx);
     if (profile.retired) return;
     profile.retired = true;
@@ -269,28 +327,47 @@ fun authorize(profile: &NpcProfile, acl: &AdminACL, expected_revision: u64, ctx:
 }
 
 fun validate_lifecycle(incarnation: u64, active_entity_id: u64, deaths: u64) {
-    assert!(incarnation > 0 && deaths <= incarnation &&
-        (active_entity_id == 0 || deaths < incarnation), EInvalidLifecycle);
+    assert!(
+        incarnation > 0 && deaths <= incarnation &&
+        (active_entity_id == 0 || deaths < incarnation),
+        EInvalidLifecycle,
+    );
 }
 
 fun emit_lifecycle(profile: &NpcProfile) {
     event::emit(NpcLifecycleSynced {
-        profile_id: object::id(profile), character_id: profile.character_id,
-        revision: profile.revision, incarnation: profile.incarnation,
-        active_entity_id: profile.active_entity_id, deaths: profile.deaths, retired: profile.retired,
+        profile_id: object::id(profile),
+        character_id: profile.character_id,
+        revision: profile.revision,
+        incarnation: profile.incarnation,
+        active_entity_id: profile.active_entity_id,
+        deaths: profile.deaths,
+        retired: profile.retired,
     });
 }
 
 public fun id(profile: &NpcProfile): ID { object::id(profile) }
+
 public fun character_id(profile: &NpcProfile): ID { profile.character_id }
+
 public fun registry_id(profile: &NpcProfile): ID { profile.registry_id }
+
 public fun admin_acl_id(profile: &NpcProfile): ID { profile.admin_acl_id }
+
 public fun tenant(profile: &NpcProfile): String { profile.tenant }
+
 public fun npc_id(profile: &NpcProfile): u32 { profile.npc_id }
+
 public fun profile_faction_key(profile: &NpcProfile): String { profile.faction_key }
+
 public fun wallet_address(profile: &NpcProfile): address { profile.wallet_address }
+
 public fun revision(profile: &NpcProfile): u64 { profile.revision }
+
 public fun incarnation(profile: &NpcProfile): u64 { profile.incarnation }
+
 public fun active_entity_id(profile: &NpcProfile): u64 { profile.active_entity_id }
+
 public fun deaths(profile: &NpcProfile): u64 { profile.deaths }
+
 public fun is_retired(profile: &NpcProfile): bool { profile.retired }

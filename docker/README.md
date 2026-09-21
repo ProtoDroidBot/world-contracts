@@ -1,6 +1,6 @@
 # Snapshot image (local Sui + contracts)
 
-Pre-built Docker image with a Sui **localnet**, deployed **world** and **builder** packages, and (with Postgres) indexer and GraphQL. Use it to run integration tests against a fixed chain from your laptop or CI.
+Pre-built Docker image with a Sui **localnet**, the deployed base **world**, five first-party feature packages, the optional **builder** package, and (with Postgres) indexer and GraphQL. Use it to run integration tests against a fixed chain from your laptop or CI.
 
 ## Run it locally
 
@@ -36,12 +36,20 @@ The compose file mounts a host folder onto `/data/deployment` in the container. 
 
 **What’s in the file**
 
-Small JSON with a `network` name and two groups of IDs:
+Small JSON with a `network` name and these groups of IDs:
 
 - **`world`** — the published world package id and important shared objects (governor cap, registries, config objects, etc.).
-- **`builder`** — the builder extension package id and related caps/config ids.
+- **`features`** — the NPC, assembly-access, catapult, Smart Industry, and transponder package and registry IDs.
+- **`builder`** — when present, the builder extension package id and related caps/config ids.
 
 Your services or tests read these hex IDs when calling the chain (e.g. which package to target, which objects to pass into transactions).
+
+The integration deployment also writes `deployments/localnet/npc-deployment.json`,
+the historical-name combined feature manifest used by EveJS. The snapshot export
+currently copies `extracted-object-ids.json`; consumers that need stable feature
+type origins and base-world bindings should retain or construct the combined
+manifest as part of their test fixture. See
+[Package topology and deployment identity](../docs/package-topology.md).
 
 ## Accounts and keys on your machine (`accounts.json`)
 

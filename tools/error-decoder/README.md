@@ -85,6 +85,13 @@ The tool automatically extracts error constants and their messages from Move sou
 - The error constant name (e.g., `ESignatureVerificationFailed`)
 - The error message (e.g., `Signature verification failed`)
 
+The current extractor covers only the base `world` package. Abort constants from
+the split `world_npc`, `world_assembly_access`, `world_catapult`,
+`world_smart_industry`, and `world_transponder` packages are not present in this
+map until the extractor and its deployment workflow are expanded to scan those
+source trees. Identify the failing on-chain package before trusting a decoded
+feature error.
+
 To regenerate the error map after adding new error constants:
 ```bash
 pnpm run extract:errors

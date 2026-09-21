@@ -9,10 +9,7 @@ module world_transponder::transponder;
 
 use std::string::String;
 use sui::{derived_object, event};
-use world::{
-    character::Character,
-    object_registry::ObjectRegistry,
-};
+use world::{character::Character, object_registry::ObjectRegistry};
 use world_npc::npc::NpcProfile;
 
 #[error(code = 0)]
@@ -22,7 +19,8 @@ const ERegistryMismatch: vector<u8> = b"Transponder scope does not belong to thi
 #[error(code = 2)]
 const EUnauthorized: vector<u8> = b"Sender is not authorized to author this transponder commitment";
 #[error(code = 3)]
-const EScopeMismatch: vector<u8> = b"Character or NPC profile does not belong to the commitment scope";
+const EScopeMismatch: vector<u8> =
+    b"Character or NPC profile does not belong to the commitment scope";
 #[error(code = 4)]
 const EStaleRevision: vector<u8> = b"Transponder revision changed; read and retry";
 #[error(code = 5)]
@@ -314,7 +312,10 @@ fun authorize_tribe(
     ctx: &TxContext,
 ) {
     assert!(record.revision == expected_revision, EStaleRevision);
-    assert!(record.authority == ctx.sender() && character.character_address() == ctx.sender(), EUnauthorized);
+    assert!(
+        record.authority == ctx.sender() && character.character_address() == ctx.sender(),
+        EUnauthorized,
+    );
     assert_character_scope(record, character);
 }
 
@@ -326,30 +327,44 @@ fun authorize_faction(
 ) {
     assert!(record.revision == expected_revision, EStaleRevision);
     assert!(!profile.is_retired(), ERetiredNpc);
-    assert!(record.authority == ctx.sender() && profile.wallet_address() == ctx.sender(), EUnauthorized);
-    assert!(record.scope_kind == SCOPE_FACTION &&
+    assert!(
+        record.authority == ctx.sender() && profile.wallet_address() == ctx.sender(),
+        EUnauthorized,
+    );
+    assert!(
+        record.scope_kind == SCOPE_FACTION &&
         record.registry_id == profile.registry_id() &&
         record.tenant == profile.tenant() &&
-        record.scope_id == profile.profile_faction_key(), EScopeMismatch);
+        record.scope_id == profile.profile_faction_key(),
+        EScopeMismatch,
+    );
 }
 
 fun assert_character_scope(record: &TransponderCommitment, character: &Character) {
     let character_id = object::id(character);
-    let expected = object::id_from_address(derived_object::derive_address(
-        record.registry_id,
-        character.key(),
-    ));
-    assert!(character_id == expected &&
+    let expected = object::id_from_address(
+        derived_object::derive_address(
+            record.registry_id,
+            character.key(),
+        ),
+    );
+    assert!(
+        character_id == expected &&
         record.scope_kind == SCOPE_TRIBE &&
         record.tenant == character.tenant() &&
-        record.scope_id == character.tribe().to_string(), EScopeMismatch);
+        record.scope_id == character.tribe().to_string(),
+        EScopeMismatch,
+    );
 }
 
 fun assert_character_registry(registry: &ObjectRegistry, character: &Character) {
     let key = character.key();
-    assert!(registry.object_exists(key) && object::id(character) == object::id_from_address(
+    assert!(
+        registry.object_exists(key) && object::id(character) == object::id_from_address(
         derived_object::derive_address(object::id(registry), key),
-    ), ERegistryMismatch);
+    ),
+        ERegistryMismatch,
+    );
 }
 
 fun assert_faction_registry(registry: &ObjectRegistry, profile: &NpcProfile) {
@@ -361,15 +376,27 @@ fun validate_commitment(commitment: &vector<u8>) {
 }
 
 public fun id(record: &TransponderCommitment): ID { object::id(record) }
+
 public fun registry_id(record: &TransponderCommitment): ID { record.registry_id }
+
 public fun tenant(record: &TransponderCommitment): String { record.tenant }
+
 public fun scope_kind(record: &TransponderCommitment): u8 { record.scope_kind }
+
 public fun scope_id(record: &TransponderCommitment): String { record.scope_id }
+
 public fun authority(record: &TransponderCommitment): address { record.authority }
+
 public fun hash_scheme(record: &TransponderCommitment): u8 { record.hash_scheme }
+
 public fun commitment(record: &TransponderCommitment): vector<u8> { record.commitment }
+
 public fun revision(record: &TransponderCommitment): u64 { record.revision }
+
 public fun is_revoked(record: &TransponderCommitment): bool { record.revoked }
+
 public fun tribe_scope(): u8 { SCOPE_TRIBE }
+
 public fun faction_scope(): u8 { SCOPE_FACTION }
+
 public fun blake2b_256_v1(): u8 { HASH_SCHEME_BLAKE2B_256_V1 }

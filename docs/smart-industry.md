@@ -1,8 +1,11 @@
 # Smart Industry
 
-`world::smart_industry` exposes the current Frontier Industry facility as a shared
+`world_smart_industry::smart_industry` exposes the current Frontier Industry facility as a shared
 Sui object. The game server supplies observations because Move cannot read the
 local game database. Dapps and other Move contracts can read the shared object.
+
+See [Package topology and deployment identity](package-topology.md) for the
+split-package address model and upgrade rules.
 
 The existing `assembly::Assembly` remains the facility's lifecycle and energy
 object. Its ID and owner capability are unchanged. Each `SmartIndustry` is derived
@@ -54,50 +57,32 @@ serialized queue and transaction journal used for Smart Assemblies handle
 concurrent wallet operations and retries after uncertain transaction responses.
 Unchanged state does not consume gas or advance timestamps.
 
-The deployed world package must contain `smart_industry`. Publishing source files
-does not modify an already deployed package. Deploy this checkout using the
-project's world deployment procedure, synchronize that deployment with
-`EveJS-Frontier/FrontierWorld.ps1 sync`, and rebuild/restart the EveJS server. Keep
-the deployment package ID, registry, and ACL together; this integration uses the
-existing localnet deployment configuration and authorized admin signer. An older
-deployment without the production entry points cannot synchronize the new
-observations; it must be upgraded before production can be reported synced.
+The deployed Smart Industry call package must contain `smart_industry`.
+Publishing source files does not modify an already deployed package. A fresh
+deployment publishes it from `contracts/world_smart_industry`, creates a shared
+`SmartIndustryRegistry`, and records its package, type origin, and registry in
+the combined feature manifest. Synchronize that deployment with
+`EveJS-Frontier/FrontierWorld.ps1 sync`, then rebuild/restart the EveJS server.
+An older implementation without the production entry points cannot synchronize
+the new observations; it must be compatibly upgraded before production can be
+reported synced.
 
-For a manual **upgrade of an existing world**, retain the original world/Assembly
-configuration. Set `SMART_INDUSTRY_PACKAGE_ID` to the upgraded package containing
-the module, in both the server environment and CLI `.env`. The first package to
-introduce this module is its type origin. If you upgrade it again, also set
-`SMART_INDUSTRY_TYPE_ORIGIN` to that first Industry package ID while pointing
-`SMART_INDUSTRY_PACKAGE_ID` at the latest implementation. Object derivation and
-vector types use the origin; function calls use the implementation. For a fresh
-deployment, both default to `WORLD_PACKAGE_ID` and need no overrides. These
+For a manual **upgrade**, retain the original world/Assembly configuration,
+Industry type origin, and `SmartIndustryRegistry`. Set
+`SMART_INDUSTRY_PACKAGE_ID` to the latest compatible implementation,
+`SMART_INDUSTRY_TYPE_ORIGIN` to the first Industry package, and
+`SMART_INDUSTRY_REGISTRY_ID` to the existing shared registry. Object derivation
+and vector types use the origin; function calls use the implementation. These
 settings do not publish or upgrade anything themselves.
 
-The EveJS server can persist these upgrade IDs in a public `industry.json`
-beside its synchronized `world.private.json` (normally under
-`_local/frontier-world/<build>/`). Its format is:
-
-```json
-{
-  "schemaVersion": 1,
-  "chainId": "CHAIN_IDENTIFIER",
-  "worldPackageId": "0xORIGINAL_WORLD_PACKAGE",
-  "objectRegistryId": "0xORIGINAL_REGISTRY",
-  "adminAclId": "0xORIGINAL_ACL",
-  "packageId": "0xLATEST_INDUSTRY_IMPLEMENTATION",
-  "typeOrigin": "0xFIRST_PACKAGE_CONTAINING_SMART_INDUSTRY"
-}
-```
-
-Replace all placeholders with verified deployment values. `chainId` and the
-three original world IDs must match the synchronized world configuration.
-`EVEJS_SUI_INDUSTRY_CONFIG_PATH` selects another file location. The
-`SMART_INDUSTRY_PACKAGE_ID` and `SMART_INDUSTRY_TYPE_ORIGIN` environment variables
-override their respective file values; an invalid or mismatched file is always
-rejected. With no file, existing environment/default behavior remains available.
-Keep the original world configuration and extracted IDs unchanged when adding
-an Industry upgrade; only the Industry implementation and type-origin settings
-point to the added module.
+EveJS reads the Industry triple from the combined public
+`npc-deployment.json` beside its synchronized `world.private.json`. The filename
+is historical and covers all five split features; there is no current standalone
+`industry.json` deployment file. `EVEJS_SUI_INDUSTRY_CONFIG_PATH` may select an
+explicit compatible manifest. Environment variables override their respective
+fields, but a malformed or base-world-mismatched file is always rejected. See
+[Package topology and deployment identity](package-topology.md) for the complete
+schema and the current lack of an automated per-feature upgrade writer.
 
 This production upgrade preserves the original `Snapshot`, `SmartIndustry`, and
 event layouts, and preserves the `create`/`sync` signatures. Production lives in
@@ -169,16 +154,24 @@ All fields have public Move getters. Numeric owner/system and blueprint values
 are attestations by the authorized server; the contract independently verifies
 parent identity/status and snapshot structure, not the off-chain game database.
 
+The current sidecar has one production record per facility. EveJS may execute
+multiple server-side job lanes, but only lane 1 is mirrored into this compatibility
+record. Lanes 2–N are not independently represented on chain. A future lane-aware
+schema requires an explicit compatible extension or contract version; readers
+must not infer that the current `ProductionRecord` describes every server lane.
+
 ## CLI and SDK
 
 The existing `SUI_NETWORK`, `SUI_RPC_URL`, `WORLD_PACKAGE_ID`, and
-`deployments/<network>/extracted-object-ids.json` select the world. Reading and
-printing a transaction plan do not require a signing key.
+`deployments/<network>/extracted-object-ids.json` select the base world. The CLI
+loads the split Industry package and registry from `features.smartIndustry`;
+the `SMART_INDUSTRY_*` variables may override those fields. Reading and printing
+a transaction plan do not require a signing key.
 
 ```bash
-npm run industry -- read --assembly 0xASSEMBLY_OBJECT_ID
-npm run industry -- sync --assembly 0xASSEMBLY_OBJECT_ID --snapshot facility.json
-npm run industry -- sync --assembly 0xASSEMBLY_OBJECT_ID --snapshot facility.json --execute
+pnpm industry -- read --assembly 0xASSEMBLY_OBJECT_ID
+pnpm industry -- sync --assembly 0xASSEMBLY_OBJECT_ID --snapshot facility.json
+pnpm industry -- sync --assembly 0xASSEMBLY_OBJECT_ID --snapshot facility.json --execute
 ```
 
 Only `--execute` submits a transaction and requires `ADMIN_PRIVATE_KEY`. The
@@ -221,8 +214,8 @@ the transaction builder maps them to the numeric Move representation.
 ## Validation
 
 ```bash
-sui move test --path contracts/world --build-env testnet smart_industry
-npm run test:industry
+sui move test --path contracts/world_smart_industry
+pnpm test:industry
 pnpm exec tsc --noEmit
 ```
 

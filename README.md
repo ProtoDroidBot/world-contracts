@@ -62,17 +62,17 @@ For a **pre-baked Sui localnet** Docker image (deployed contracts, Postgres-back
 
 ### Install Dependencies
 ```bash
-npm install
+pnpm install
 ```
 
 ### Build Contracts
 ```bash
-npm run build
+pnpm build
 ```
 
 ### Run Tests
 ```bash
-npm run test
+pnpm test
 ```
 
 ### Deploy Locally
@@ -80,6 +80,29 @@ npm run test
 # Uses SUI_NETWORK from .env (default: localnet)
 pnpm deploy-world
 ```
+
+`deploy-world` is a fresh-publish command. It cleans publication and deployment
+outputs, publishes the base world plus five first-party feature packages, and
+writes a combined feature manifest. It is not an upgrade command. See
+[Package topology and deployment identity](docs/package-topology.md) before
+operating on an existing deployment.
+
+## Package topology
+
+The current deployment contains:
+
+- the base `world` package;
+- `world_npc` (`npc`);
+- `world_assembly_access` (`assembly_access`);
+- `world_catapult` (`catapult`);
+- `world_smart_industry` (`smart_industry`); and
+- `world_transponder` (`transponder`).
+
+Each feature has an independent call package, stable type origin, and shared
+registry recorded in `deployments/<network>/npc-deployment.json`. The filename
+is historical and now covers all five features. Do not target a feature through
+the base package unless the deployment manifest explicitly identifies that
+package as the feature call target.
 
 For EveJS client build 3502403, `env.example` configures Mini/Small Gate
 (`88086`) and Slingshot/Smart Catapult (`95627`) to **65 light-years**, and
@@ -91,12 +114,14 @@ and `3453166622491992000`, using `9460730472580800` meters per light-year.
 an existing `.env` must contain the same updated gate entries. Gate range remains
 configurable through `gate::set_max_distance`.
 
-`world::catapult` adds a deterministic one-way route sidecar to the existing
+`world_catapult::catapult` adds a deterministic one-way route sidecar to the existing
 Slingshot `Gate` object. The route commits the source gate and solar system,
 one destination solar system, exact distance, revision, and update time. It
 does not require or create a destination Gate. Route creation and changes use
 `AdminACL`, require the source gate offline and unpaired, and enforce the
 configured type range; jump authorization requires the source gate online.
+See [Smart Catapult routes](docs/catapult.md) for its object, authorization,
+deployment, and test model.
 
 EveJS `FrontierWorld.ps1` uses this build's `3502403/world-contracts` checkout
 by default. The sibling `smart-assembly-control/world-contracts` checkout is a
@@ -105,16 +130,25 @@ to check the defaults, including the extracted client component data when presen
 
 ## Smart Industry
 
-`world::smart_industry` adds a shared, blockchain-readable snapshot to existing
+`world_smart_industry::smart_industry` adds a shared, blockchain-readable snapshot to existing
 Industry assemblies. The EveJS server syncs their current blueprint, recipe limits,
 and input/output inventories through the existing assembly worker. See
 [Smart Industry](docs/smart-industry.md) for the contract API, live sync setup,
-authorization, and read/sync CLI. Run `npm run test:industry` for its TypeScript
-tests and `sui move test --path contracts/world` for Move tests.
+authorization, and read/sync CLI. Run `pnpm test:industry` for its TypeScript
+tests and `sui move test --path contracts/world_smart_industry` for Move tests.
+
+## NPC profiles and assembly access
+
+`world_npc::npc` provides persistent NPC profiles, faction-wallet binding, and
+lifecycle synchronization without changing the base Character/Profile layouts.
+`world_assembly_access::assembly_access` provides smart-assembly policies,
+attenuated delegation, revocation, and cross-owner custody authorization. See
+[NPC profiles](docs/npc-profiles.md) and
+[Assembly access](docs/assembly-access.md).
 
 ## Private transponder commitments
 
-`world::transponder` stores domain-separated BLAKE2b-256 commitments for private
+`world_transponder::transponder` stores domain-separated BLAKE2b-256 commitments for private
 tribe and NPC-faction transponder codes. Plaintext codes and random salts remain
 off-chain. See [Transponder commitments](docs/transponder-commitments.md) for the
 hash protocol, authorization model, rotation/revocation lifecycle, and deployment
@@ -174,6 +208,10 @@ mappings. Each entry has:
 ```
 
 A `fallback` entry covers changes that don't match any specific path.
+The current mapping has no feature-specific entries for the five split
+`contracts/world_*` packages, so those changes use the fallback world overview.
+Add explicit mappings when the downstream builder documentation gains dedicated
+NPC, assembly-access, catapult, Industry, or transponder pages.
 
 ### Avoiding infinite loops
 

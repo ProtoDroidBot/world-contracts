@@ -10,7 +10,7 @@ use world::{
     gate::{Self, Gate, GateConfig},
     network_node::{Self, NetworkNode},
     object_registry::ObjectRegistry,
-    test_helpers::{Self, admin, governor, tenant, user_a},
+    test_helpers::{Self, admin, governor, tenant, user_a}
 };
 use world_catapult::catapult::{Self, Catapult, CatapultRegistry};
 
@@ -115,10 +115,12 @@ fun create_route(ts: &mut ts::Scenario, gate_id: ID, destination: u64, distance:
     let acl = ts::take_shared<AdminACL>(ts);
     let mut clock = clock::create_for_testing(ts.ctx());
     clock.set_for_testing(100_000);
-    let expected_id = object::id_from_address(derived_object::derive_address(
-        object::id(&registry),
-        catapult::new_catapult_key(gate_id),
-    ));
+    let expected_id = object::id_from_address(
+        derived_object::derive_address(
+            object::id(&registry),
+            catapult::new_catapult_key(gate_id),
+        ),
+    );
     catapult::create(
         &mut registry,
         &gate,

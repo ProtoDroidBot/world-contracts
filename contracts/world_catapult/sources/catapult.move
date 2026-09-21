@@ -11,7 +11,7 @@ use world::{
     access::AdminACL,
     character::{Self, Character},
     gate::{Self, Gate, GateConfig},
-    in_game_id::TenantItemId,
+    in_game_id::TenantItemId
 };
 
 #[error(code = 0)]
@@ -23,7 +23,8 @@ const EGateOnline: vector<u8> = b"Smart Catapult must be offline to change desti
 #[error(code = 3)]
 const EGateOffline: vector<u8> = b"Smart Catapult must be online to jump";
 #[error(code = 4)]
-const EInvalidSolarSystem: vector<u8> = b"Source and destination solar systems must be distinct and nonzero";
+const EInvalidSolarSystem: vector<u8> =
+    b"Source and destination solar systems must be distinct and nonzero";
 #[error(code = 5)]
 const EOutOfRange: vector<u8> = b"Destination exceeds the Smart Catapult range";
 #[error(code = 6)]
@@ -174,8 +175,11 @@ public fun sync_destination(
 ) {
     admin_acl.verify_sponsor(ctx);
     assert!(catapult.revision == expected_revision, EStaleRevision);
-    assert!(catapult.gate_id == gate::id(gate) && catapult.gate_key == gate::key(gate)
-        && catapult.type_id == gate::type_id(gate), ECatapultMismatch);
+    assert!(
+        catapult.gate_id == gate::id(gate) && catapult.gate_key == gate::key(gate)
+        && catapult.type_id == gate::type_id(gate),
+        ECatapultMismatch,
+    );
     assert!(catapult.source_solar_system_id == source_solar_system_id, ECatapultMismatch);
     validate_gate(gate);
     validate_route(
@@ -210,8 +214,11 @@ public fun jump(
     ctx: &TxContext,
 ) {
     admin_acl.verify_sponsor(ctx);
-    assert!(catapult.gate_id == gate::id(gate) && catapult.gate_key == gate::key(gate)
-        && catapult.type_id == gate::type_id(gate), ECatapultMismatch);
+    assert!(
+        catapult.gate_id == gate::id(gate) && catapult.gate_key == gate::key(gate)
+        && catapult.type_id == gate::type_id(gate),
+        ECatapultMismatch,
+    );
     assert!(gate::is_online(gate), EGateOffline);
     assert!(option::is_none(&gate::linked_gate_id(gate)), EGateLinked);
     assert!(option::is_some(&catapult.destination_solar_system_id), ENoDestination);
@@ -233,13 +240,19 @@ public fun is_catapult_type(type_id: u64): bool {
 }
 
 public fun id(catapult: &Catapult): ID { object::id(catapult) }
+
 public fun gate_id(catapult: &Catapult): ID { catapult.gate_id }
+
 public fun source_solar_system_id(catapult: &Catapult): u64 { catapult.source_solar_system_id }
+
 public fun destination_solar_system_id(catapult: &Catapult): Option<u64> {
     catapult.destination_solar_system_id
 }
+
 public fun distance(catapult: &Catapult): u64 { catapult.distance }
+
 public fun revision(catapult: &Catapult): u64 { catapult.revision }
+
 public fun updated_at_ms(catapult: &Catapult): u64 { catapult.updated_at_ms }
 
 fun validate_gate(gate: &Gate) {

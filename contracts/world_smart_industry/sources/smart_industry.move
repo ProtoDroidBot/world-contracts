@@ -10,12 +10,7 @@ module world_smart_industry::smart_industry;
 
 use std::string::{Self, String};
 use sui::{clock::{Self, Clock}, derived_object, dynamic_field, event};
-use world::{
-    access::AdminACL,
-    assembly::Assembly,
-    in_game_id::TenantItemId,
-    status,
-};
+use world::{access::AdminACL, assembly::Assembly, in_game_id::TenantItemId, status};
 
 #[error(code = 0)]
 const EAssemblyMismatch: vector<u8> = b"Industry record belongs to another assembly";
@@ -136,34 +131,56 @@ public fun new_industry_key(assembly_id: ID): IndustryKey {
 }
 
 public fun new_production(
-    job_id: u64, state: u8, requested_runs: u64, completed_runs: u64,
-    run_started_at_ms: u64, run_end_at_ms: u64, stop_reason: String,
+    job_id: u64,
+    state: u8,
+    requested_runs: u64,
+    completed_runs: u64,
+    run_started_at_ms: u64,
+    run_end_at_ms: u64,
+    stop_reason: String,
 ): Production {
     assert!(state <= 3 && stop_reason.length() <= 64, EInvalidProduction);
     let reason_bytes = stop_reason.as_bytes();
     let mut index = 0;
     while (index < reason_bytes.length()) {
         let byte = reason_bytes[index];
-        assert!((byte >= 65 && byte <= 90) ||
-            (index > 0 && ((byte >= 48 && byte <= 57) || byte == 95)), EInvalidProduction);
+        assert!(
+            (byte >= 65 && byte <= 90) ||
+            (index > 0 && ((byte >= 48 && byte <= 57) || byte == 95)),
+            EInvalidProduction,
+        );
         index = index + 1;
     };
     if (state == 0) {
-        assert!(job_id == 0 && requested_runs == 0 && completed_runs == 0
-            && run_started_at_ms == 0 && run_end_at_ms == 0 && stop_reason.is_empty(), EInvalidProduction);
+        assert!(
+            job_id == 0 && requested_runs == 0 && completed_runs == 0
+            && run_started_at_ms == 0 && run_end_at_ms == 0 && stop_reason.is_empty(),
+            EInvalidProduction,
+        );
     } else {
         assert!(job_id > 0 && run_end_at_ms > run_started_at_ms, EInvalidProduction);
         assert!(requested_runs == 0 || completed_runs <= requested_runs, EInvalidProduction);
         if (state == 3) {
             assert!(!stop_reason.is_empty(), EInvalidProduction);
         } else {
-            assert!(stop_reason.is_empty() && (requested_runs == 0 || completed_runs < requested_runs), EInvalidProduction);
+            assert!(
+                stop_reason.is_empty() && (requested_runs == 0 || completed_runs < requested_runs),
+                EInvalidProduction,
+            );
         };
         if (stop_reason == string::utf8(b"COMPLETED")) {
             assert!(requested_runs > 0 && completed_runs == requested_runs, EInvalidProduction);
         };
     };
-    Production { job_id, state, requested_runs, completed_runs, run_started_at_ms, run_end_at_ms, stop_reason }
+    Production {
+        job_id,
+        state,
+        requested_runs,
+        completed_runs,
+        run_started_at_ms,
+        run_end_at_ms,
+        stop_reason,
+    }
 }
 
 public fun idle_production(): Production {
@@ -228,12 +245,27 @@ public fun create(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    create_with_production(registry, assembly, acl, observed_at_ms, snapshot, idle_production(), clock, ctx);
+    create_with_production(
+        registry,
+        assembly,
+        acl,
+        observed_at_ms,
+        snapshot,
+        idle_production(),
+        clock,
+        ctx,
+    );
 }
 
 public fun create_with_production(
-    registry: &mut SmartIndustryRegistry, assembly: &Assembly, acl: &AdminACL,
-    observed_at_ms: u64, snapshot: Snapshot, production: Production, clock: &Clock, ctx: &mut TxContext,
+    registry: &mut SmartIndustryRegistry,
+    assembly: &Assembly,
+    acl: &AdminACL,
+    observed_at_ms: u64,
+    snapshot: Snapshot,
+    production: Production,
+    clock: &Clock,
+    ctx: &mut TxContext,
 ) {
     acl.verify_sponsor(ctx);
     validate_production_snapshot(&production, &snapshot);
@@ -255,7 +287,11 @@ public fun create_with_production(
         synced_at_ms,
         snapshot,
     };
-    dynamic_field::add(&mut industry.id, PRODUCTION_KEY, ProductionRecord { revision: 1, production });
+    dynamic_field::add(
+        &mut industry.id,
+        PRODUCTION_KEY,
+        ProductionRecord { revision: 1, production },
+    );
     event::emit(SmartIndustryCreatedEvent {
         industry_id,
         assembly_id,
@@ -293,13 +329,29 @@ public fun sync(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    sync_with_production(industry, assembly, acl, expected_revision, observed_at_ms, snapshot, idle_production(), clock, ctx);
+    sync_with_production(
+        industry,
+        assembly,
+        acl,
+        expected_revision,
+        observed_at_ms,
+        snapshot,
+        idle_production(),
+        clock,
+        ctx,
+    );
 }
 
 public fun sync_with_production(
-    industry: &mut SmartIndustry, assembly: &Assembly, acl: &AdminACL,
-    expected_revision: u64, observed_at_ms: u64, snapshot: Snapshot, production: Production,
-    clock: &Clock, ctx: &TxContext,
+    industry: &mut SmartIndustry,
+    assembly: &Assembly,
+    acl: &AdminACL,
+    expected_revision: u64,
+    observed_at_ms: u64,
+    snapshot: Snapshot,
+    production: Production,
+    clock: &Clock,
+    ctx: &TxContext,
 ) {
     acl.verify_sponsor(ctx);
     validate_production_snapshot(&production, &snapshot);
@@ -321,7 +373,11 @@ public fun sync_with_production(
     if (dynamic_field::exists_(&industry.id, PRODUCTION_KEY)) {
         dynamic_field::remove<u8, ProductionRecord>(&mut industry.id, PRODUCTION_KEY);
     };
-    dynamic_field::add(&mut industry.id, PRODUCTION_KEY, ProductionRecord { revision: industry.revision, production });
+    dynamic_field::add(
+        &mut industry.id,
+        PRODUCTION_KEY,
+        ProductionRecord { revision: industry.revision, production },
+    );
     event::emit(SmartIndustrySyncedEvent {
         industry_id: object::id(industry),
         assembly_id: industry.assembly_id,
@@ -334,44 +390,83 @@ public fun sync_with_production(
 // === Public views ===
 
 public fun id(industry: &SmartIndustry): ID { object::id(industry) }
+
 public fun assembly_id(industry: &SmartIndustry): ID { industry.assembly_id }
+
 public fun assembly_key(industry: &SmartIndustry): TenantItemId { industry.assembly_key }
+
 public fun type_id(industry: &SmartIndustry): u64 { industry.type_id }
+
 public fun assembly_status(industry: &SmartIndustry): u8 { industry.assembly_status }
+
 public fun revision(industry: &SmartIndustry): u64 { industry.revision }
+
 public fun observed_at_ms(industry: &SmartIndustry): u64 { industry.observed_at_ms }
+
 public fun synced_at_ms(industry: &SmartIndustry): u64 { industry.synced_at_ms }
+
 public fun snapshot(industry: &SmartIndustry): &Snapshot { &industry.snapshot }
+
 public fun owner_id(snapshot: &Snapshot): u64 { snapshot.owner_id }
+
 public fun solar_system_id(snapshot: &Snapshot): u64 { snapshot.solar_system_id }
+
 public fun blueprint_id(snapshot: &Snapshot): u64 { snapshot.blueprint_id }
+
 public fun run_time(snapshot: &Snapshot): u64 { snapshot.run_time }
+
 public fun inputs(snapshot: &Snapshot): &vector<ItemStack> { &snapshot.inputs }
+
 public fun outputs(snapshot: &Snapshot): &vector<ItemStack> { &snapshot.outputs }
+
 public fun blueprint_inputs(snapshot: &Snapshot): &vector<RecipeSlot> { &snapshot.blueprint_inputs }
-public fun blueprint_outputs(snapshot: &Snapshot): &vector<RecipeSlot> { &snapshot.blueprint_outputs }
+
+public fun blueprint_outputs(snapshot: &Snapshot): &vector<RecipeSlot> {
+    &snapshot.blueprint_outputs
+}
+
 public fun item_type_id(item: &ItemStack): u64 { item.type_id }
+
 public fun item_quantity(item: &ItemStack): u64 { item.quantity }
+
 public fun recipe_type_id(slot: &RecipeSlot): u64 { slot.type_id }
+
 public fun recipe_quantity(slot: &RecipeSlot): u64 { slot.quantity }
+
 public fun recipe_max_quantity(slot: &RecipeSlot): u64 { slot.max_quantity }
+
 public fun max_items(): u64 { MAX_ITEMS }
+
 public fun max_future_skew_ms(): u64 { MAX_FUTURE_SKEW_MS }
+
 public fun key_assembly_id(key: &IndustryKey): ID { key.assembly_id }
+
 public fun production(industry: &SmartIndustry): Production {
     if (has_production(industry)) {
         dynamic_field::borrow<u8, ProductionRecord>(&industry.id, PRODUCTION_KEY).production
     } else idle_production()
 }
-public fun has_production(industry: &SmartIndustry): bool { dynamic_field::exists_(&industry.id, PRODUCTION_KEY) }
+
+public fun has_production(industry: &SmartIndustry): bool {
+    dynamic_field::exists_(&industry.id, PRODUCTION_KEY)
+}
+
 public fun production_job_id(value: &Production): u64 { value.job_id }
+
 public fun production_state(value: &Production): u8 { value.state }
+
 public fun production_requested_runs(value: &Production): u64 { value.requested_runs }
+
 public fun production_completed_runs(value: &Production): u64 { value.completed_runs }
+
 public fun production_run_started_at_ms(value: &Production): u64 { value.run_started_at_ms }
+
 public fun production_run_end_at_ms(value: &Production): u64 { value.run_end_at_ms }
+
 public fun production_stop_reason(value: &Production): String { value.stop_reason }
+
 public fun production_record_revision(value: &ProductionRecord): u64 { value.revision }
+
 public fun production_record_value(value: &ProductionRecord): Production { value.production }
 
 #[test_only]

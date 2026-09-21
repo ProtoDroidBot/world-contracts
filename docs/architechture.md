@@ -133,35 +133,29 @@ To support game mechanics requiring information asymmetry while maintaining on-c
 ```text
 world-contracts/
 │
-├── world/                          
-│   ├── sources/
-│   │   ├── character/             
-│   │   ├── assemblies/             # Game defined assemblies
-│   │   │   ├── gate.move
-│   │   │   └── storage_unit.move
-│   │   │   └── assembly.move
-│   │   └── primitives/             # Composable primitives
-│   │       ├── status.move
-│   │       ├── fuel.move
-│   │       ├── inventory.move
-│   │       ├── location.move
-│   │       └── network_node.move
-│   ├── tests/
-│   │   └── world_tests.move
-│   ├── Move.toml
-│   ├── Move.lock
-└── readme.md
-
-builder-package/                    # Custom extension packages by builders
-│
-├── sources/
-│   └── gate.move
-├── tests/
-│   └── gate_tests.move
-├── Move.toml
-├── Move.lock
-└── readme.md
+├── contracts/
+│   ├── world/                      # Base primitives and game assemblies
+│   │   ├── sources/
+│   │   ├── tests/
+│   │   ├── Move.toml
+│   │   └── Move.lock
+│   ├── world_npc/                  # First-party NPC identity sidecar
+│   ├── world_assembly_access/      # First-party policy/custody sidecar
+│   ├── world_catapult/             # First-party one-way route sidecar
+│   ├── world_smart_industry/       # First-party Industry state sidecar
+│   ├── world_transponder/          # First-party private-code commitments
+│   └── extension_examples/         # Builder extension examples
+├── scripts/                        # Fresh deployment/configuration flows
+├── ts-scripts/                     # SDK and administrative clients
+├── deployments/                    # Environment-specific outputs
+└── docs/
 ```
+
+The base primitives and base assemblies remain one composable package. The five
+first-party sidecars are split packages so their call implementations can evolve
+without changing their initial type origins. This split is an operational
+deployment boundary, not a change to the three logical layers above. See
+[Package topology and deployment identity](package-topology.md).
 
 ---
 
@@ -186,10 +180,14 @@ builder-package/                    # Custom extension packages by builders
 
 ## Alternatives Considered
 
-### Alternative 1: Separate packages per layer
-Implementing each layer as separate Move packages with deployed address dependencies.
+### Alternative 1: Separate packages for every architectural layer
+Implementing every primitive, base assembly, and extension layer as separate Move packages with deployed address dependencies.
 
-**Rejected:** Adds deployment complexity, requires package upgrades when addresses change, and complicates local development.
+**Rejected:** Splitting every layer adds dependency and deployment complexity,
+requires package upgrades when addresses change, and complicates local
+development. The implemented design keeps primitives and base assemblies in
+`world`, while isolating a bounded set of first-party feature sidecars whose
+independent type origins and upgrade cadence justify that cost.
 
 ### Alternative 2: Address-owned objects
 Using owned objects with explicit transfers between game and players.
@@ -204,4 +202,4 @@ Exposing cleartext locations on-chain via oracle service for builder access and 
 ### Alternative 4: Capability objects for authorization
 Using transferable capability objects instead of type-based witness pattern.
 
-**Rejected:** Type witness pattern provides better security and elegant design. 
+**Rejected:** Type witness pattern provides better security and elegant design.

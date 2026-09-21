@@ -8,7 +8,7 @@ use world::{
     character::{Self, Character, PlayerProfile},
     object_registry::{Self, ObjectRegistry},
     test_helpers::{Self, governor, admin, user_a, user_b, tenant},
-    world::GovernorCap,
+    world::GovernorCap
 };
 use world_npc::npc::{Self, NpcProfile, NpcRegistry};
 
@@ -27,8 +27,20 @@ fun create(scenario: &mut ts::Scenario, npc_id: u32, wallet: address): (ID, ID) 
     let mut npc_registry = ts::take_shared<NpcRegistry>(scenario);
     let acl = ts::take_shared<AdminACL>(scenario);
     let character = npc::create_npc_character(
-        &mut registry, &mut npc_registry, &acl, npc_id, tenant(), 100, wallet, b"NPC".to_string(),
-        500012, b"".to_string(), 1, SHIP_A, 0, scenario.ctx(),
+        &mut registry,
+        &mut npc_registry,
+        &acl,
+        npc_id,
+        tenant(),
+        100,
+        wallet,
+        b"NPC".to_string(),
+        500012,
+        b"".to_string(),
+        1,
+        SHIP_A,
+        0,
+        scenario.ctx(),
     );
     let character_id = character.id();
     let profile_id = character.npc_profile_id().destroy_some();
@@ -40,13 +52,24 @@ fun create(scenario: &mut ts::Scenario, npc_id: u32, wallet: address): (ID, ID) 
 }
 
 fun sync(
-    scenario: &mut ts::Scenario, profile_id: ID, expected_revision: u64,
-    incarnation: u64, active_entity_id: u64, deaths: u64,
+    scenario: &mut ts::Scenario,
+    profile_id: ID,
+    expected_revision: u64,
+    incarnation: u64,
+    active_entity_id: u64,
+    deaths: u64,
 ) {
     ts::next_tx(scenario, admin());
     let mut profile = ts::take_shared_by_id<NpcProfile>(scenario, profile_id);
     let acl = ts::take_shared<AdminACL>(scenario);
-    profile.sync_lifecycle(&acl, expected_revision, incarnation, active_entity_id, deaths, scenario.ctx());
+    profile.sync_lifecycle(
+        &acl,
+        expected_revision,
+        incarnation,
+        active_entity_id,
+        deaths,
+        scenario.ctx(),
+    );
     ts::return_shared(profile);
     ts::return_shared(acl);
 }
@@ -65,9 +88,15 @@ fun creates_compatible_character_and_deterministic_profile() {
     let player_profile = ts::take_from_sender<PlayerProfile>(&scenario);
     assert!(character.is_npc_character(), 0);
     assert_eq!(character.npc_profile_id().destroy_some(), profile_id);
-    assert_eq!(profile.id(), object::id_from_address(derived_object::derive_address(
-        object::id(&npc_registry), npc::new_profile_key(character_id),
-    )));
+    assert_eq!(
+        profile.id(),
+        object::id_from_address(
+            derived_object::derive_address(
+                object::id(&npc_registry),
+                npc::new_profile_key(character_id),
+            ),
+        ),
+    );
     assert_eq!(profile.character_id(), character_id);
     assert_eq!(profile.registry_id(), object::id(&registry));
     assert_eq!(profile.admin_acl_id(), object::id(&acl));
@@ -97,7 +126,14 @@ fun attaches_legacy_character_without_replacing_player_profile() {
     let mut registry = ts::take_shared<ObjectRegistry>(&scenario);
     let acl = ts::take_shared<AdminACL>(&scenario);
     let character = character::create_character(
-        &mut registry, &acl, NPC_ID, tenant(), 100, user_a(), b"Legacy".to_string(), scenario.ctx(),
+        &mut registry,
+        &acl,
+        NPC_ID,
+        tenant(),
+        100,
+        user_a(),
+        b"Legacy".to_string(),
+        scenario.ctx(),
     );
     let character_id = character.id();
     assert!(!character.is_npc_character(), 0);
@@ -113,8 +149,18 @@ fun attaches_legacy_character_without_replacing_player_profile() {
     let mut npc_registry = ts::take_shared<NpcRegistry>(&scenario);
     let acl = ts::take_shared<AdminACL>(&scenario);
     let mut character = ts::take_shared_by_id<Character>(&scenario, character_id);
-    npc::register_profile(&mut registry, &mut npc_registry, &mut character, &acl, 0, b"osa".to_string(),
-        4, SHIP_B, 2, scenario.ctx());
+    npc::register_profile(
+        &mut registry,
+        &mut npc_registry,
+        &mut character,
+        &acl,
+        0,
+        b"osa".to_string(),
+        4,
+        SHIP_B,
+        2,
+        scenario.ctx(),
+    );
     assert_eq!(character.id(), character_id);
     ts::return_shared(character);
     ts::return_shared(registry);
@@ -151,7 +197,10 @@ fun faction_cannot_acquire_a_second_wallet() {
 fun canonical_numeric_and_string_only_faction_keys() {
     assert_eq!(npc::faction_key(500012, b"".to_string()), b"500012-none".to_string());
     assert_eq!(npc::faction_key(0, b"osa".to_string()), b"0-osa".to_string());
-    assert_eq!(npc::faction_key(42, b"blood-raiders_1".to_string()), b"42-blood-raiders_1".to_string());
+    assert_eq!(
+        npc::faction_key(42, b"blood-raiders_1".to_string()),
+        b"42-blood-raiders_1".to_string(),
+    );
     assert_eq!(npc::faction_key(0, b"".to_string()), b"0-none".to_string());
 }
 
@@ -166,7 +215,10 @@ fun rejects_literal_none_marker() { npc::faction_key(0, b"none".to_string()); }
 #[test]
 #[expected_failure(abort_code = npc::EInvalidFaction)]
 fun rejects_long_faction_string() {
-    npc::faction_key(0, b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string());
+    npc::faction_key(
+        0,
+        b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+    );
 }
 
 #[test]
@@ -195,10 +247,21 @@ fun rejects_duplicate_profile_registration() {
     let (id, _) = create(&mut scenario, NPC_ID, user_a());
     ts::next_tx(&mut scenario, admin());
     let mut registry = ts::take_shared<ObjectRegistry>(&scenario);
+    let mut npc_registry = ts::take_shared<NpcRegistry>(&scenario);
     let acl = ts::take_shared<AdminACL>(&scenario);
     let mut character = ts::take_shared_by_id<Character>(&scenario, id);
-    npc::register_profile(&mut registry, &mut npc_registry, &mut character, &acl, 500012, b"".to_string(),
-        1, SHIP_A, 0, scenario.ctx());
+    npc::register_profile(
+        &mut registry,
+        &mut npc_registry,
+        &mut character,
+        &acl,
+        500012,
+        b"".to_string(),
+        1,
+        SHIP_A,
+        0,
+        scenario.ctx(),
+    );
     ts::return_shared(character);
     ts::return_shared(registry);
     ts::return_shared(npc_registry);
@@ -219,8 +282,18 @@ fun rejects_a_character_from_another_registry() {
     let mut npc_registry = ts::take_shared<NpcRegistry>(&scenario);
     let acl = ts::take_shared<AdminACL>(&scenario);
     let mut character = ts::take_shared_by_id<Character>(&scenario, id);
-    npc::register_profile(&mut registry, &mut npc_registry, &mut character, &acl, 500012, b"".to_string(),
-        1, SHIP_A, 0, scenario.ctx());
+    npc::register_profile(
+        &mut registry,
+        &mut npc_registry,
+        &mut character,
+        &acl,
+        500012,
+        b"".to_string(),
+        1,
+        SHIP_A,
+        0,
+        scenario.ctx(),
+    );
     ts::return_shared(character);
     ts::return_shared(registry);
     ts::return_shared(npc_registry);
@@ -333,8 +406,20 @@ fun unauthorized_wallet_cannot_create_npc_character() {
     let mut npc_registry = ts::take_shared<NpcRegistry>(&scenario);
     let acl = ts::take_shared<AdminACL>(&scenario);
     let _character = npc::create_npc_character(
-        &mut registry, &mut npc_registry, &acl, NPC_ID, tenant(), 100, user_a(), b"NPC".to_string(),
-        500012, b"".to_string(), 1, SHIP_A, 0, scenario.ctx(),
+        &mut registry,
+        &mut npc_registry,
+        &acl,
+        NPC_ID,
+        tenant(),
+        100,
+        user_a(),
+        b"NPC".to_string(),
+        500012,
+        b"".to_string(),
+        1,
+        SHIP_A,
+        0,
+        scenario.ctx(),
     );
     // Fail at this test's location if creation ever omits authorization; do not
     // let a later share_character sponsor check mask that regression.
@@ -350,7 +435,14 @@ fun unauthorized_wallet_cannot_register_legacy_character() {
     let mut registry = ts::take_shared<ObjectRegistry>(&scenario);
     let acl = ts::take_shared<AdminACL>(&scenario);
     let character = character::create_character(
-        &mut registry, &acl, NPC_ID, tenant(), 100, user_a(), b"Legacy".to_string(), scenario.ctx(),
+        &mut registry,
+        &acl,
+        NPC_ID,
+        tenant(),
+        100,
+        user_a(),
+        b"Legacy".to_string(),
+        scenario.ctx(),
     );
     let character_id = character.id();
     character.share_character(&acl, scenario.ctx());
@@ -361,8 +453,18 @@ fun unauthorized_wallet_cannot_register_legacy_character() {
     let mut npc_registry = ts::take_shared<NpcRegistry>(&scenario);
     let acl = ts::take_shared<AdminACL>(&scenario);
     let mut character = ts::take_shared_by_id<Character>(&scenario, character_id);
-    npc::register_profile(&mut registry, &mut npc_registry, &mut character, &acl, 500012, b"".to_string(),
-        1, SHIP_A, 0, scenario.ctx());
+    npc::register_profile(
+        &mut registry,
+        &mut npc_registry,
+        &mut character,
+        &acl,
+        500012,
+        b"".to_string(),
+        1,
+        SHIP_A,
+        0,
+        scenario.ctx(),
+    );
     ts::return_shared(character);
     ts::return_shared(registry);
     ts::return_shared(npc_registry);
@@ -526,7 +628,14 @@ fun ordinary_human_character_operations_are_unchanged() {
     let mut registry = ts::take_shared<ObjectRegistry>(&scenario);
     let acl = ts::take_shared<AdminACL>(&scenario);
     let mut character = character::create_character(
-        &mut registry, &acl, 140_000_001, tenant(), 100, user_a(), b"Human".to_string(), scenario.ctx(),
+        &mut registry,
+        &acl,
+        140_000_001,
+        tenant(),
+        100,
+        user_a(),
+        b"Human".to_string(),
+        scenario.ctx(),
     );
     assert!(!character.is_npc_character(), 0);
     assert!(character.npc_profile_id().is_none(), 0);
