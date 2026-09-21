@@ -30,3 +30,17 @@ for (const script of [
     assert.ok(link < online, "gate::link_gates requires both gates to be offline");
   });
 }
+
+test("the gate-link proof is bound to the two gates", () => {
+  const source = readFileSync(
+    `${repositoryRoot}/ts-scripts/gate/link-gates.ts`,
+    "utf8",
+  );
+  const call = source.match(/generateLocationProof\(([\s\S]*?)\);/);
+
+  assert.ok(call, "link-gates.ts must generate a location proof");
+  assert.equal(
+    call[1].replace(/\s+/g, ""),
+    "adminKeypair,playerCtx.address,gateAId,gateBId,LOCATION_HASH",
+  );
+});

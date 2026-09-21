@@ -74,7 +74,7 @@
     "setup-access": "tsx ts-scripts/access/setup-access.ts",
     "sig-verify": "tsx ts-scripts/crypto/sig-verify.ts",
     "ssu-online": "tsx ts-scripts/storage-unit/online.ts",
-    "test": "node --test tests/seed-order.test.mjs && find contracts -maxdepth 1 -mindepth 1 -type d | xargs -P 4 -I {} sui move test --build-env testnet --path {}",
+    "test": "node --test tests/seed-order.test.mjs \u0026\u0026 find contracts -maxdepth 1 -mindepth 1 -type d | xargs -P 4 -I {} sui move test --build-env testnet --path {}",
     "test:energy-config": "node --experimental-strip-types --test tests/assembly-energy-config.test.ts",
     "test:industry": "node --import tsx --test tests/smart-industry.test.ts",
     "test:npc-deployment": "node --import tsx --test tests/npc-deployment-manifest.test.ts",

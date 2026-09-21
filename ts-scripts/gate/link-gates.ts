@@ -118,22 +118,22 @@ async function main() {
         const adminKeypair = adminCtx.keypair;
         const adminAddress = adminKeypair.getPublicKey().toSuiAddress();
 
-        const characterId = deriveObjectId(
-            playerCtx.config.objectRegistry,
-            GAME_CHARACTER_ID,
-            playerCtx.config.packageId
-        );
         const gateAId = deriveObjectId(
             playerCtx.config.objectRegistry,
             GATE_ITEM_ID_1,
+            playerCtx.config.packageId
+        );
+        const gateBId = deriveObjectId(
+            playerCtx.config.objectRegistry,
+            GATE_ITEM_ID_2,
             playerCtx.config.packageId
         );
 
         const proofHex = await generateLocationProof(
             adminKeypair,
             playerCtx.address,
-            characterId,
             gateAId,
+            gateBId,
             LOCATION_HASH
         );
 
