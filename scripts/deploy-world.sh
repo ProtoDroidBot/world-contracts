@@ -23,6 +23,11 @@ publish world_catapult "deployments/$ENV/world_catapult_package.json" "$ENV" "$S
 publish world_smart_industry "deployments/$ENV/world_smart_industry_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
 publish world_transponder "deployments/$ENV/world_transponder_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
 publish world_assembly_access "deployments/$ENV/world_assembly_access_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
+publish world_action_queue "deployments/$ENV/world_action_queue_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
+publish world_industry_actions "deployments/$ENV/world_industry_actions_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
+publish world_logistics_actions "deployments/$ENV/world_logistics_actions_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
+publish world_infrastructure_actions "deployments/$ENV/world_infrastructure_actions_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
+publish world_automation "deployments/$ENV/world_automation_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
 
 echo "--- extract-object-ids ---"
 export SUI_NETWORK="$ENV"

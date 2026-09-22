@@ -171,6 +171,31 @@ function main() {
             "assembly_access",
             "AssemblyAccessRegistry"
         ),
+        actionQueue: extractFeatureIds(
+            `./deployments/${network}/world_action_queue_package.json`,
+            "action_queue",
+            "ActionQueueRegistry"
+        ),
+        industryActions: extractFeatureIds(
+            `./deployments/${network}/world_industry_actions_package.json`,
+            "industry_actions",
+            "IndustryActionRegistry"
+        ),
+        logisticsActions: extractFeatureIds(
+            `./deployments/${network}/world_logistics_actions_package.json`,
+            "logistics_actions",
+            "LogisticsRegistry"
+        ),
+        infrastructureActions: extractFeatureIds(
+            `./deployments/${network}/world_infrastructure_actions_package.json`,
+            "infrastructure_actions",
+            "InfrastructureActionRegistry"
+        ),
+        automation: extractFeatureIds(
+            `./deployments/${network}/world_automation_package.json`,
+            "automation",
+            "AutomationRegistry"
+        ),
     };
 
     const output: ExtractedObjectIds = { network, world, features, builder };

@@ -69,8 +69,10 @@ sui move build --path contracts/world
 This creates a `build` directory in your package (e.g., `contracts/world/build/World/`) containing all the debugging metadata needed for source-level debugging.
 
 The command and artifact path must match the package that actually failed. The
-`npc`, `assembly_access`, `catapult`, `smart_industry`, and `transponder`
-modules are published from separate `contracts/world_*` packages; do not copy
+`npc`, `assembly_access`, `catapult`, `smart_industry`, `transponder`,
+`action_queue`, `industry_actions`, `logistics_actions`,
+`infrastructure_actions`, and `automation` modules are published from separate
+`contracts/world_*` packages; do not copy
 the base `World` build when the replayed package ID is a feature package. Build
 that feature directory, inspect its generated `build/` package name, and copy
 that directory to the matching on-chain package-ID folder. See

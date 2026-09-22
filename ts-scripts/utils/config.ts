@@ -23,6 +23,11 @@ export type ExtractedObjectIds = {
         smartIndustry: FeaturePackageIds;
         transponder: FeaturePackageIds;
         assemblyAccess: FeaturePackageIds;
+        actionQueue: FeaturePackageIds;
+        industryActions: FeaturePackageIds;
+        logisticsActions: FeaturePackageIds;
+        infrastructureActions: FeaturePackageIds;
+        automation: FeaturePackageIds;
     };
 };
 
@@ -82,4 +87,9 @@ export const MODULES = {
     TURRET: "turret",
     FUEL: "fuel",
     ENERGY: "energy",
+    ACTION_QUEUE: "action_queue",
+    INDUSTRY_ACTIONS: "industry_actions",
+    LOGISTICS_ACTIONS: "logistics_actions",
+    INFRASTRUCTURE_ACTIONS: "infrastructure_actions",
+    AUTOMATION: "automation",
 } as const;

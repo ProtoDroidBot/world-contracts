@@ -1,0 +1,13 @@
+[package]
+name = "world_industry_actions"
+edition = "2024.beta"
+
+[dependencies]
+world = { local = "../world" }
+world_action_queue = { local = "../world_action_queue" }
+world_smart_industry = { local = "../world_smart_industry" }
+
+[environments]
+testnet_internal = "4c78adac"
+testnet_utopia = "4c78adac"
+testnet_stillness = "4c78adac"

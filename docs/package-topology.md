@@ -1,6 +1,6 @@
 # Package topology and deployment identity
 
-The deployed world is one base package plus five first-party feature packages. Do not assume that a module name implies the base-world package address. Runtime callers use the feature's configured call-package ID, while object derivation and type checks use its stable type-origin ID.
+The deployed world is one base package plus ten first-party feature packages. Do not assume that a module name implies the base-world package address. Runtime callers use the feature's configured call-package ID, while object derivation and type checks use its stable type-origin ID.
 
 ## Current package map
 
@@ -12,6 +12,11 @@ The deployed world is one base package plus five first-party feature packages. D
 | `contracts/world_catapult` | `catapult` | `world` | `catapultPackageId`, `catapultTypeOrigin`, `catapultRegistryId` |
 | `contracts/world_smart_industry` | `smart_industry` | `world` | `industryPackageId`, `industryTypeOrigin`, `industryRegistryId` |
 | `contracts/world_transponder` | `transponder` | `world`, `world_npc` | `transponderPackageId`, `transponderTypeOrigin`, `transponderRegistryId` |
+| `contracts/world_action_queue` | `action_queue` | `world` | `actionPackageId`, `actionTypeOrigin`, `actionRegistryId` |
+| `contracts/world_industry_actions` | `industry_actions` | `world`, `world_action_queue`, `world_smart_industry` | `industryActionsPackageId`, `industryActionsTypeOrigin`, `industryActionsRegistryId` |
+| `contracts/world_logistics_actions` | `logistics_actions` | `world`, `world_action_queue` | `logisticsPackageId`, `logisticsTypeOrigin`, `logisticsRegistryId` |
+| `contracts/world_infrastructure_actions` | `infrastructure_actions` | `world`, `world_action_queue` | `infrastructurePackageId`, `infrastructureTypeOrigin`, `infrastructureRegistryId` |
+| `contracts/world_automation` | `automation` | `world`, `world_action_queue` | `automationPackageId`, `automationTypeOrigin`, `automationRegistryId` |
 
 The source address names (`world_npc`, `world_assembly_access`, and so on) are compile-time names. A submitted Move target has the form `<configured-call-package>::<module>::<function>`.
 
@@ -32,7 +37,12 @@ The base-world package, Object Registry, and Admin ACL are separate invariants. 
 3. `world_catapult`;
 4. `world_smart_industry`;
 5. `world_transponder`;
-6. `world_assembly_access`.
+6. `world_assembly_access`;
+7. `world_action_queue`;
+8. `world_industry_actions`;
+9. `world_logistics_actions`;
+10. `world_infrastructure_actions`;
+11. `world_automation`.
 
 It then writes `deployments/<network>/extracted-object-ids.json` and the combined public feature manifest. On a fresh deployment, every feature's call package and type origin are the same newly published feature-package ID.
 
@@ -42,11 +52,11 @@ The feature packages reuse `contracts/world/Pub.<network>.toml` so their local `
 
 ## Combined feature manifest
 
-The authoritative public manifest is `deployments/<network>/npc-deployment.json`. The filename is historical; schema version 1 binds all five feature packages and registries:
+The authoritative public manifest is `deployments/<network>/npc-deployment.json`. The filename is historical. New deployments use schema version 3 and bind all ten feature packages and registries:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "chainId": "CHAIN_IDENTIFIER",
   "worldPackageId": "0xORIGINAL_WORLD_PACKAGE",
   "objectRegistryId": "0xORIGINAL_OBJECT_REGISTRY",
@@ -65,11 +75,26 @@ The authoritative public manifest is `deployments/<network>/npc-deployment.json`
   "industryRegistryId": "0xINDUSTRY_REGISTRY",
   "transponderPackageId": "0xLATEST_TRANSPONDER_PACKAGE",
   "transponderTypeOrigin": "0xFIRST_TRANSPONDER_PACKAGE",
-  "transponderRegistryId": "0xTRANSPONDER_REGISTRY"
+  "transponderRegistryId": "0xTRANSPONDER_REGISTRY",
+  "actionPackageId": "0xLATEST_ACTION_QUEUE_PACKAGE",
+  "actionTypeOrigin": "0xFIRST_ACTION_QUEUE_PACKAGE",
+  "actionRegistryId": "0xACTION_QUEUE_REGISTRY",
+  "industryActionsPackageId": "0xLATEST_INDUSTRY_ACTIONS_PACKAGE",
+  "industryActionsTypeOrigin": "0xFIRST_INDUSTRY_ACTIONS_PACKAGE",
+  "industryActionsRegistryId": "0xINDUSTRY_ACTIONS_REGISTRY",
+  "logisticsPackageId": "0xLATEST_LOGISTICS_ACTIONS_PACKAGE",
+  "logisticsTypeOrigin": "0xFIRST_LOGISTICS_ACTIONS_PACKAGE",
+  "logisticsRegistryId": "0xLOGISTICS_ACTIONS_REGISTRY",
+  "infrastructurePackageId": "0xLATEST_INFRASTRUCTURE_ACTIONS_PACKAGE",
+  "infrastructureTypeOrigin": "0xFIRST_INFRASTRUCTURE_ACTIONS_PACKAGE",
+  "infrastructureRegistryId": "0xINFRASTRUCTURE_ACTIONS_REGISTRY",
+  "automationPackageId": "0xLATEST_AUTOMATION_PACKAGE",
+  "automationTypeOrigin": "0xFIRST_AUTOMATION_PACKAGE",
+  "automationRegistryId": "0xAUTOMATION_REGISTRY"
 }
 ```
 
-All addresses are canonical, nonzero Sui addresses. The chain and base-world values must match `extracted-object-ids.json` and the base publication metadata. Current EveJS synchronization treats the version-1 manifest as one atomic record; partial feature manifests are not supported.
+All addresses are canonical, nonzero Sui addresses. The chain and base-world values must match `extracted-object-ids.json` and the base publication metadata. Current EveJS synchronization treats each supported manifest version as one atomic record; partial feature manifests are not supported. Schema v1 and v2 remain readable for migration, with missing action groups mapped to their documented legacy packages. Schema v3 is required to select the five dedicated action-contract packages.
 
 ## Upgrade invariants and current limitation
 
@@ -122,6 +147,11 @@ sui move test --path contracts/world_assembly_access
 sui move test --path contracts/world_catapult
 sui move test --path contracts/world_smart_industry
 sui move test --path contracts/world_transponder
+sui move test --path contracts/world_action_queue
+sui move test --path contracts/world_industry_actions
+sui move test --path contracts/world_logistics_actions
+sui move test --path contracts/world_infrastructure_actions
+sui move test --path contracts/world_automation
 ```
 
 Tests and source must be committed and reviewed together with intentional `Move.lock` changes. Generated publication files and deployment JSON are environment-specific evidence; define their retention policy explicitly rather than relying on an uncommitted working tree.

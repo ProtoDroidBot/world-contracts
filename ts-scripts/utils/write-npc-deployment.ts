@@ -12,7 +12,7 @@ import {
 import { getExtractedObjectIdsPath } from "./world-object-ids";
 
 type FreshNpcDeployment = {
-    schemaVersion: 1;
+    schemaVersion: 3;
     chainId: string;
     worldPackageId: string;
     objectRegistryId: string;
@@ -32,6 +32,21 @@ type FreshNpcDeployment = {
     transponderPackageId: string;
     transponderTypeOrigin: string;
     transponderRegistryId: string;
+    actionPackageId: string;
+    actionTypeOrigin: string;
+    actionRegistryId: string;
+    industryActionsPackageId: string;
+    industryActionsTypeOrigin: string;
+    industryActionsRegistryId: string;
+    logisticsPackageId: string;
+    logisticsTypeOrigin: string;
+    logisticsRegistryId: string;
+    infrastructurePackageId: string;
+    infrastructureTypeOrigin: string;
+    infrastructureRegistryId: string;
+    automationPackageId: string;
+    automationTypeOrigin: string;
+    automationRegistryId: string;
 };
 
 export function assertPublishedModule(
@@ -64,6 +79,11 @@ export function buildFreshNpcDeployment(
     publishedCatapultPackageId: string,
     publishedIndustryPackageId: string,
     publishedTransponderPackageId: string,
+    publishedActionPackageId: string,
+    publishedIndustryActionsPackageId: string,
+    publishedLogisticsPackageId: string,
+    publishedInfrastructurePackageId: string,
+    publishedAutomationPackageId: string,
 ): FreshNpcDeployment {
     const normalizedChain = String(chainId || "").trim().toLowerCase();
     if (!/^[0-9a-f]+$/.test(normalizedChain)) {
@@ -86,6 +106,26 @@ export function buildFreshNpcDeployment(
     const transponderPackageId = canonicalAddress(
         publishedTransponderPackageId,
         "Published transponder package ID",
+    );
+    const actionPackageId = canonicalAddress(
+        publishedActionPackageId,
+        "Published action-queue package ID",
+    );
+    const industryActionsPackageId = canonicalAddress(
+        publishedIndustryActionsPackageId,
+        "Published Industry Actions package ID",
+    );
+    const logisticsPackageId = canonicalAddress(
+        publishedLogisticsPackageId,
+        "Published Logistics Actions package ID",
+    );
+    const infrastructurePackageId = canonicalAddress(
+        publishedInfrastructurePackageId,
+        "Published Infrastructure Actions package ID",
+    );
+    const automationPackageId = canonicalAddress(
+        publishedAutomationPackageId,
+        "Published Automation package ID",
     );
     if (canonicalAddress(ids.world.packageId, "Extracted world package ID") !== worldPackageId) {
         throw new Error("Publish output and extracted world IDs refer to different packages");
@@ -118,8 +158,42 @@ export function buildFreshNpcDeployment(
     ) {
         throw new Error("Publish output and extracted transponder IDs refer to different packages");
     }
+    if (
+        canonicalAddress(ids.features.actionQueue.packageId, "Extracted action-queue package ID") !==
+        actionPackageId
+    ) {
+        throw new Error("Publish output and extracted action-queue IDs refer to different packages");
+    }
+    if (
+        canonicalAddress(
+            ids.features.industryActions.packageId,
+            "Extracted Industry Actions package ID",
+        ) !== industryActionsPackageId
+    ) {
+        throw new Error("Publish output and extracted Industry Actions IDs refer to different packages");
+    }
+    if (
+        canonicalAddress(ids.features.logisticsActions.packageId, "Extracted Logistics Actions package ID") !==
+        logisticsPackageId
+    ) {
+        throw new Error("Publish output and extracted Logistics Actions IDs refer to different packages");
+    }
+    if (
+        canonicalAddress(
+            ids.features.infrastructureActions.packageId,
+            "Extracted Infrastructure Actions package ID",
+        ) !== infrastructurePackageId
+    ) {
+        throw new Error("Publish output and extracted Infrastructure Actions IDs refer to different packages");
+    }
+    if (
+        canonicalAddress(ids.features.automation.packageId, "Extracted Automation package ID") !==
+        automationPackageId
+    ) {
+        throw new Error("Publish output and extracted Automation IDs refer to different packages");
+    }
     return {
-        schemaVersion: 1,
+        schemaVersion: 3,
         chainId: normalizedChain,
         worldPackageId,
         objectRegistryId: canonicalAddress(ids.world.objectRegistry, "ObjectRegistry ID"),
@@ -151,6 +225,36 @@ export function buildFreshNpcDeployment(
             ids.features.transponder.registryId,
             "TransponderRegistry ID",
         ),
+        actionPackageId,
+        actionTypeOrigin: actionPackageId,
+        actionRegistryId: canonicalAddress(
+            ids.features.actionQueue.registryId,
+            "ActionQueueRegistry ID",
+        ),
+        industryActionsPackageId,
+        industryActionsTypeOrigin: industryActionsPackageId,
+        industryActionsRegistryId: canonicalAddress(
+            ids.features.industryActions.registryId,
+            "IndustryActionRegistry ID",
+        ),
+        logisticsPackageId,
+        logisticsTypeOrigin: logisticsPackageId,
+        logisticsRegistryId: canonicalAddress(
+            ids.features.logisticsActions.registryId,
+            "LogisticsRegistry ID",
+        ),
+        infrastructurePackageId,
+        infrastructureTypeOrigin: infrastructurePackageId,
+        infrastructureRegistryId: canonicalAddress(
+            ids.features.infrastructureActions.registryId,
+            "InfrastructureActionRegistry ID",
+        ),
+        automationPackageId,
+        automationTypeOrigin: automationPackageId,
+        automationRegistryId: canonicalAddress(
+            ids.features.automation.registryId,
+            "AutomationRegistry ID",
+        ),
     };
 }
 
@@ -178,6 +282,26 @@ function main() {
         process.env.TRANSPONDER_PUBLISH_OUTPUT ||
             `./deployments/${network}/world_transponder_package.json`,
     );
+    const actionPublishPath = resolvePublishOutputPath(
+        process.env.ACTION_QUEUE_PUBLISH_OUTPUT ||
+            `./deployments/${network}/world_action_queue_package.json`,
+    );
+    const industryActionsPublishPath = resolvePublishOutputPath(
+        process.env.INDUSTRY_ACTIONS_PUBLISH_OUTPUT ||
+            `./deployments/${network}/world_industry_actions_package.json`,
+    );
+    const logisticsPublishPath = resolvePublishOutputPath(
+        process.env.LOGISTICS_ACTIONS_PUBLISH_OUTPUT ||
+            `./deployments/${network}/world_logistics_actions_package.json`,
+    );
+    const infrastructurePublishPath = resolvePublishOutputPath(
+        process.env.INFRASTRUCTURE_ACTIONS_PUBLISH_OUTPUT ||
+            `./deployments/${network}/world_infrastructure_actions_package.json`,
+    );
+    const automationPublishPath = resolvePublishOutputPath(
+        process.env.AUTOMATION_PUBLISH_OUTPUT ||
+            `./deployments/${network}/world_automation_package.json`,
+    );
     const publicationPath = path.resolve(
         process.env.WORLD_PUBLICATION_FILE || `./contracts/world/Pub.${network}.toml`,
     );
@@ -189,16 +313,47 @@ function main() {
     const catapultPublish = readPublishOutputFile(catapultPublishPath);
     const industryPublish = readPublishOutputFile(industryPublishPath);
     const transponderPublish = readPublishOutputFile(transponderPublishPath);
+    const actionPublish = readPublishOutputFile(actionPublishPath);
+    const industryActionsPublish = readPublishOutputFile(industryActionsPublishPath);
+    const logisticsPublish = readPublishOutputFile(logisticsPublishPath);
+    const infrastructurePublish = readPublishOutputFile(infrastructurePublishPath);
+    const automationPublish = readPublishOutputFile(automationPublishPath);
     const npcPublished = npcPublish.objectChanges.find(change => change.type === "published");
     const accessPublished = accessPublish.objectChanges.find(change => change.type === "published");
     const catapultPublished = catapultPublish.objectChanges.find(change => change.type === "published");
     const industryPublished = industryPublish.objectChanges.find(change => change.type === "published");
     const transponderPublished = transponderPublish.objectChanges.find(change => change.type === "published");
+    const actionPublished = actionPublish.objectChanges.find(change => change.type === "published");
+    const industryActionsPublished = industryActionsPublish.objectChanges.find(
+        change => change.type === "published",
+    );
+    const logisticsPublished = logisticsPublish.objectChanges.find(change => change.type === "published");
+    const infrastructurePublished = infrastructurePublish.objectChanges.find(
+        change => change.type === "published",
+    );
+    const automationPublished = automationPublish.objectChanges.find(change => change.type === "published");
     assertPublishedModule((npcPublished as any)?.modules, "npc", "NPC");
     assertPublishedModule((accessPublished as any)?.modules, "assembly_access", "Assembly access");
     assertPublishedModule((catapultPublished as any)?.modules, "catapult", "Catapult");
     assertPublishedModule((industryPublished as any)?.modules, "smart_industry", "Smart Industry");
     assertPublishedModule((transponderPublished as any)?.modules, "transponder", "Transponder");
+    assertPublishedModule((actionPublished as any)?.modules, "action_queue", "Action queue");
+    assertPublishedModule(
+        (industryActionsPublished as any)?.modules,
+        "industry_actions",
+        "Industry Actions",
+    );
+    assertPublishedModule(
+        (logisticsPublished as any)?.modules,
+        "logistics_actions",
+        "Logistics Actions",
+    );
+    assertPublishedModule(
+        (infrastructurePublished as any)?.modules,
+        "infrastructure_actions",
+        "Infrastructure Actions",
+    );
+    assertPublishedModule((automationPublished as any)?.modules, "automation", "Automation");
     const publication = fs.readFileSync(publicationPath, "utf8");
     const chain = new RegExp('^chain-id\\s*=\\s*"([0-9a-fA-F]+)"\\s*$', "m")
         .exec(publication)?.[1];
@@ -213,6 +368,11 @@ function main() {
         getPublishedPackageId(catapultPublish.objectChanges),
         getPublishedPackageId(industryPublish.objectChanges),
         getPublishedPackageId(transponderPublish.objectChanges),
+        getPublishedPackageId(actionPublish.objectChanges),
+        getPublishedPackageId(industryActionsPublish.objectChanges),
+        getPublishedPackageId(logisticsPublish.objectChanges),
+        getPublishedPackageId(infrastructurePublish.objectChanges),
+        getPublishedPackageId(automationPublish.objectChanges),
     );
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     const temporaryPath = `${outputPath}.tmp-${process.pid}`;
