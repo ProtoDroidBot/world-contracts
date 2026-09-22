@@ -130,6 +130,31 @@ test("split faction configs reference and inherit the default policy", () => {
         ["500010-guristas", "500001-caldari"],
         ["transponder", "npc"],
         { "500010-guristas": ["npc"] },
+        {
+            "500001-caldari": {
+                transponderCode: "CALDARI",
+                startingRegion: { regionID: 10000005, solarSystemIDs: [30000052] },
+                membership: {
+                    includedTypeIDs: [101],
+                    typeListProfiles: [{
+                        profileID: "npc-profiles-by-faction",
+                        source: "npcProfiles",
+                        match: "factionIdentity",
+                    }],
+                },
+                diplomacy: {
+                    enemies: [{ factionKey: "500010-guristas", transponderCode: "GURISTAS" }],
+                },
+                leadership: [],
+                commanders: [],
+            },
+            "500010-guristas": {
+                transponderCode: "GURISTAS",
+                diplomacy: {
+                    enemies: [{ factionKey: "500001-caldari", transponderCode: "CALDARI" }],
+                },
+            },
+        },
     );
     assert.deepEqual(split.factionConfig.default, {
         id: "default", path: "factions/default.v1.json",
@@ -140,6 +165,22 @@ test("split faction configs reference and inherit the default policy", () => {
     assert.deepEqual(split.files["factions/default.v1.json"].capabilities, ["npc", "transponder"]);
     assert.equal("capabilities" in split.files["factions/500001-caldari.v1.json"], false);
     assert.deepEqual(split.files["factions/500010-guristas.v1.json"].capabilities, ["npc"]);
+    assert.equal(split.files["factions/500001-caldari.v1.json"].schemaVersion, 2);
+    assert.deepEqual(
+        (split.files["factions/500001-caldari.v1.json"].membership as any).includedTypeIDs,
+        [101],
+    );
+    assert.deepEqual(split.files["factions/500001-caldari.v1.json"].leadership, []);
+    assert.deepEqual(split.files["factions/500001-caldari.v1.json"].startingRegion, {
+        regionID: 10000005, solarSystemIDs: [30000052],
+    });
+    assert.throws(() => buildSplitFactionFeatureConfiguration(
+        ["500001-caldari"], ["npc"], {}, {
+            "500001-caldari": {
+                startingRegion: { regionID: -1, solarSystemIDs: [30000052] },
+            },
+        },
+    ), /invalid starting region ID/);
 });
 
 test("fresh world-feature manifest rejects mismatched packages and unsafe identities", () => {

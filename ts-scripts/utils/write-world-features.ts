@@ -1,7 +1,7 @@
 /** Write the versioned public world-feature manifest after a fresh publish. */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type { ExtractedObjectIds } from "./config";
 import {
@@ -56,6 +56,138 @@ export const WORLD_FEATURE_CAPABILITY_NAMES = Object.freeze(
     Object.keys(LEGACY_FEATURE_FIELDS),
 );
 
+type FactionPolicyInput = {
+    transponderCode?: string | null;
+    startingRegion?: {
+        regionID?: number | null;
+        solarSystemIDs?: readonly number[];
+    };
+    membership?: {
+        includedTypeIDs?: readonly number[];
+        excludedTypeIDs?: readonly number[];
+        typeListProfiles?: ReadonlyArray<{
+            profileID: string;
+            source: "npcProfiles";
+            match: "factionIdentity";
+        }>;
+    };
+    diplomacy?: {
+        allies?: ReadonlyArray<{ factionKey: string; transponderCode?: string | null }>;
+        enemies?: ReadonlyArray<{ factionKey: string; transponderCode?: string | null }>;
+    };
+    leadership?: ReadonlyArray<{ characterID: string; characterType: "npc" | "player" }>;
+    commanders?: ReadonlyArray<{ characterID: string; characterType: "npc" | "player" }>;
+};
+
+function canonicalFactionKey(value: string): string {
+    const normalized = String(value || "").trim().toLowerCase();
+    const match = /^(\d{1,10})-[a-z0-9][a-z0-9_-]{0,95}$/.exec(normalized);
+    if (!match || Number(match[1]) > 0xffffffff) {
+        throw new Error("Faction feature keys must use factionID-factionStringOnlyID");
+    }
+    return normalized;
+}
+
+function normalizeFactionPolicy(
+    value: FactionPolicyInput | undefined,
+    factionKey: string,
+): Record<string, unknown> {
+    const source = value || {};
+    const transponderCode = source.transponderCode == null
+        ? null
+        : String(source.transponderCode).trim().toUpperCase();
+    if (transponderCode !== null && (
+        !/^[A-Z0-9][A-Z0-9_:-]*$/.test(transponderCode) || transponderCode.length > 32
+    )) throw new Error(`Faction ${factionKey} has an invalid transponder code`);
+    const typeIDs = (values: readonly number[] | undefined, label: string) => {
+        const result = [...new Set(values || [])];
+        if (result.some(typeID => !Number.isSafeInteger(typeID) || typeID <= 0 || typeID > 0xffffffff)) {
+            throw new Error(`${label} must contain positive u32 type IDs`);
+        }
+        if (result.length !== (values || []).length) throw new Error(`${label} contains duplicates`);
+        return result.sort((left, right) => left - right);
+    };
+    const includedTypeIDs = typeIDs(source.membership?.includedTypeIDs, `Faction ${factionKey} included types`);
+    const excludedTypeIDs = typeIDs(source.membership?.excludedTypeIDs, `Faction ${factionKey} excluded types`);
+    if (source.startingRegion !== undefined && (
+        !source.startingRegion || typeof source.startingRegion !== "object" ||
+        Array.isArray(source.startingRegion)
+    )) throw new Error(`Faction ${factionKey} has an invalid starting region`);
+    const startingRegion = source.startingRegion || {};
+    for (const key of Object.keys(startingRegion)) {
+        if (key !== "regionID" && key !== "solarSystemIDs") {
+            throw new Error(`Faction ${factionKey} has an unsupported starting region field ${key}`);
+        }
+    }
+    const regionID = startingRegion.regionID ?? null;
+    if (regionID !== null && (
+        !Number.isSafeInteger(regionID) || regionID <= 0 || regionID > 0xffffffff
+    )) throw new Error(`Faction ${factionKey} has an invalid starting region ID`);
+    const solarSystemIDs = typeIDs(
+        startingRegion.solarSystemIDs, `Faction ${factionKey} starting solar systems`,
+    );
+    if (includedTypeIDs.some(typeID => excludedTypeIDs.includes(typeID))) {
+        throw new Error(`Faction ${factionKey} cannot include and exclude the same type ID`);
+    }
+    const seenProfiles = new Set<string>();
+    const typeListProfiles = (source.membership?.typeListProfiles || []).map(profile => {
+        const profileID = String(profile?.profileID || "").trim().toLowerCase();
+        if (!/^[a-z0-9][a-z0-9:_-]{0,127}$/.test(profileID) || seenProfiles.has(profileID) ||
+            profile?.source !== "npcProfiles" || profile?.match !== "factionIdentity") {
+            throw new Error(`Faction ${factionKey} has an invalid type-list profile`);
+        }
+        seenProfiles.add(profileID);
+        return { profileID, source: "npcProfiles", match: "factionIdentity" };
+    });
+    const contacts = (
+        values: ReadonlyArray<{ factionKey: string; transponderCode?: string | null }> | undefined,
+        label: string,
+    ) => {
+        const seen = new Set<string>();
+        return (values || []).map(contact => {
+            const targetKey = canonicalFactionKey(contact?.factionKey);
+            const targetCode = contact?.transponderCode == null
+                ? null
+                : String(contact.transponderCode).trim().toUpperCase();
+            if (targetKey === factionKey || seen.has(targetKey) || (targetCode !== null && (
+                !/^[A-Z0-9][A-Z0-9_:-]*$/.test(targetCode) || targetCode.length > 32
+            ))) throw new Error(`Faction ${factionKey} has an invalid ${label} contact`);
+            seen.add(targetKey);
+            return { factionKey: targetKey, transponderCode: targetCode };
+        }).sort((left, right) => left.factionKey.localeCompare(right.factionKey));
+    };
+    const allies = contacts(source.diplomacy?.allies, "ally");
+    const enemies = contacts(source.diplomacy?.enemies, "enemy");
+    if (allies.some(ally => enemies.some(enemy => enemy.factionKey === ally.factionKey))) {
+        throw new Error(`Faction ${factionKey} lists a contact as both ally and enemy`);
+    }
+    const characters = (
+        values: ReadonlyArray<{ characterID: string; characterType: "npc" | "player" }> | undefined,
+        label: string,
+    ) => {
+        const seen = new Set<string>();
+        return (values || []).map(character => {
+            const characterID = String(character?.characterID || "").trim();
+            const characterType = String(character?.characterType || "").trim().toLowerCase();
+            const identity = `${characterType}:${characterID}`;
+            if (!/^[1-9][0-9]*$/.test(characterID) || BigInt(characterID) > ((1n << 64n) - 1n) ||
+                (characterType !== "npc" && characterType !== "player") || seen.has(identity)) {
+                throw new Error(`Faction ${factionKey} has an invalid ${label} character`);
+            }
+            seen.add(identity);
+            return { characterID, characterType };
+        });
+    };
+    return {
+        transponderCode,
+        startingRegion: { regionID, solarSystemIDs },
+        membership: { includedTypeIDs, excludedTypeIDs, typeListProfiles },
+        diplomacy: { allies, enemies },
+        leadership: characters(source.leadership, "leadership"),
+        commanders: characters(source.commanders, "commander"),
+    };
+}
+
 function capabilityNames(values: readonly string[], label: string): string[] {
     if (!Array.isArray(values) || values.some(value =>
         typeof value !== "string" || !WORLD_FEATURE_CAPABILITY_NAMES.includes(value)
@@ -70,23 +202,24 @@ export function buildSplitFactionFeatureConfiguration(
     factionKeys: readonly string[],
     defaultCapabilities: readonly string[] = WORLD_FEATURE_CAPABILITY_NAMES,
     overrides: Record<string, readonly string[] | undefined> = {},
+    policies: Record<string, FactionPolicyInput | undefined> = {},
 ) {
     const keys = [...new Set(factionKeys)].sort();
     if (keys.length !== factionKeys.length) throw new Error("Faction feature keys must be unique");
     for (const factionKey of keys) {
-        const match = /^(\d{1,10})-[a-z0-9][a-z0-9_-]{0,95}$/.exec(factionKey);
-        if (!match || Number(match[1]) > 0xffffffff) {
-            throw new Error("Faction feature keys must use factionID-factionStringOnlyID");
-        }
+        canonicalFactionKey(factionKey);
     }
     for (const factionKey of Object.keys(overrides)) {
         if (!keys.includes(factionKey)) throw new Error(`Faction override has no manifest entry: ${factionKey}`);
+    }
+    for (const factionKey of Object.keys(policies)) {
+        if (!keys.includes(factionKey)) throw new Error(`Faction policy has no manifest entry: ${factionKey}`);
     }
     const defaultPath = "factions/default.v1.json" as const;
     const files: Record<string, Record<string, unknown>> = {
         [defaultPath]: {
             format: "eve-frontier-faction-features",
-            schemaVersion: 1,
+            schemaVersion: 2,
             configId: "default",
             capabilities: capabilityNames(defaultCapabilities, "Default faction config"),
         },
@@ -97,13 +230,24 @@ export function buildSplitFactionFeatureConfiguration(
         references[factionKey] = { path: factionPath, fallback: "default" };
         files[factionPath] = {
             format: "eve-frontier-faction-features",
-            schemaVersion: 1,
+            schemaVersion: 2,
             factionKey,
             fallback: "default",
             ...(overrides[factionKey] === undefined
                 ? {}
                 : { capabilities: capabilityNames(overrides[factionKey], `Faction ${factionKey}`) }),
+            ...normalizeFactionPolicy(policies[factionKey], factionKey),
         };
+    }
+    for (const factionKey of keys) {
+        const policy = files[`factions/${factionKey}.v1.json`] as any;
+        for (const contact of [...policy.diplomacy.allies, ...policy.diplomacy.enemies]) {
+            const target = files[`factions/${contact.factionKey}.v1.json`] as any;
+            if (!target) throw new Error(`Faction ${factionKey} references unknown ${contact.factionKey}`);
+            if (contact.transponderCode !== target.transponderCode) {
+                throw new Error(`Faction ${factionKey} has a stale code for ${contact.factionKey}`);
+            }
+        }
     }
     return {
         factionConfig: {
@@ -472,28 +616,109 @@ export function writeWorldFeatureManifest() {
         getPublishedPackageId(infrastructurePublish.objectChanges),
         getPublishedPackageId(automationPublish.objectChanges),
     );
-    const factionSourcePath = String(process.env.WORLD_FACTION_FEATURES_SOURCE || "").trim();
+    const repositoryFactionSourcePath = path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../../../npc-factions.config.json",
+    );
+    const configuredFactionSourcePath = String(
+        process.env.WORLD_FACTION_FEATURES_SOURCE || "",
+    ).trim();
+    const factionSourcePath = configuredFactionSourcePath ||
+        (fs.existsSync(repositoryFactionSourcePath) ? repositoryFactionSourcePath : "");
     let factionFiles: Record<string, Record<string, unknown>> = {};
     if (factionSourcePath) {
         const source = JSON.parse(fs.readFileSync(path.resolve(factionSourcePath), "utf8"));
-        if (!source || source.schemaVersion !== 1 || !Array.isArray(source.factions) ||
-            !Array.isArray(source.defaultCapabilities)) {
+        const defaultCapabilities = source?.defaultCapabilities ??
+            source?.worldCapabilities ?? ["npc", "transponder"];
+        if (!source || ![1, 2].includes(source.schemaVersion) || !Array.isArray(source.factions) ||
+            !Array.isArray(defaultCapabilities)) {
             throw new Error("Faction feature source has an unsupported schema");
         }
         const factionKeys: string[] = [];
         const overrides: Record<string, readonly string[] | undefined> = {};
+        const policies: Record<string, FactionPolicyInput | undefined> = {};
+        const identities = new Map<string, string>();
+        const entries = new Map<string, any>();
         for (const entry of source.factions) {
-            if (!entry || typeof entry.factionKey !== "string" ||
+            if (!entry ||
                 (entry.capabilities !== undefined && !Array.isArray(entry.capabilities))) {
                 throw new Error("Faction feature source contains an invalid faction record");
             }
-            factionKeys.push(entry.factionKey);
-            overrides[entry.factionKey] = entry.capabilities;
+            const rawStringID = String(entry.factionKey || "").trim().toLowerCase();
+            const numericID = Number(entry.factionID || 0);
+            const factionKey = /^(\d{1,10})-[a-z0-9][a-z0-9_-]{0,95}$/.test(rawStringID)
+                ? canonicalFactionKey(rawStringID)
+                : canonicalFactionKey(`${numericID}-${rawStringID || "none"}`);
+            factionKeys.push(factionKey);
+            entries.set(factionKey, entry);
+            if (numericID > 0) identities.set(`id:${numericID}`, factionKey);
+            if (rawStringID && rawStringID !== factionKey) identities.set(`key:${rawStringID}`, factionKey);
+            overrides[factionKey] = entry.capabilities;
+            const signal = String(entry.transponderSignal || "").trim().toUpperCase();
+            const suffix = String(entry.transponderSuffix || "").trim().toUpperCase();
+            policies[factionKey] = {
+                transponderCode: entry.transponderCode ??
+                    (signal ? `${signal}${suffix ? `:${suffix}` : ""}` : null),
+                startingRegion: entry.startingRegion ?? source.defaults?.startingRegion,
+                membership: entry.membership ?? entry.typeMembership ?? source.defaults?.typeMembership,
+                diplomacy: entry.diplomacy,
+                leadership: entry.leadership ?? source.defaults?.leadership,
+                commanders: entry.commanders ?? source.defaults?.commanders,
+            };
+        }
+        const dispositions = new Map<string, "friendly" | "hostile">();
+        for (const relation of Array.isArray(source.relations) ? source.relations : []) {
+            if (!relation || !["friendly", "hostile", "neutral"].includes(relation.disposition)) {
+                throw new Error("Faction feature source contains an invalid relation");
+            }
+            const sourceKeys = [
+                ...(relation.sourceFactionIDs || []).map((id: unknown) => identities.get(`id:${Number(id)}`)),
+                ...(relation.sourceFactionKeys || []).map((key: unknown) =>
+                    identities.get(`key:${String(key).trim().toLowerCase()}`)),
+            ];
+            const targetKeys = [
+                ...(relation.targetFactionIDs || []).map((id: unknown) => identities.get(`id:${Number(id)}`)),
+                ...(relation.targetFactionKeys || []).map((key: unknown) =>
+                    identities.get(`key:${String(key).trim().toLowerCase()}`)),
+            ];
+            if (sourceKeys.some((key: unknown) => !key) || targetKeys.some((key: unknown) => !key)) {
+                throw new Error("Faction feature source relation references an unknown faction");
+            }
+            for (const sourceKey of sourceKeys as string[]) {
+                for (const targetKey of targetKeys as string[]) {
+                    if (sourceKey === targetKey || relation.disposition === "neutral") continue;
+                    dispositions.set(`${sourceKey}\u0000${targetKey}`, relation.disposition);
+                    if (relation.reciprocal === true) {
+                        dispositions.set(`${targetKey}\u0000${sourceKey}`, relation.disposition);
+                    }
+                }
+            }
+        }
+        for (const factionKey of factionKeys) {
+            const direct = policies[factionKey]?.diplomacy;
+            if (direct) continue;
+            const allies: Array<{ factionKey: string; transponderCode: string | null }> = [];
+            const enemies: Array<{ factionKey: string; transponderCode: string | null }> = [];
+            for (const targetKey of factionKeys) {
+                const disposition = dispositions.get(`${factionKey}\u0000${targetKey}`);
+                if (!disposition) continue;
+                const targetEntry = entries.get(targetKey);
+                const targetSignal = String(targetEntry.transponderSignal || "").trim().toUpperCase();
+                const targetSuffix = String(targetEntry.transponderSuffix || "").trim().toUpperCase();
+                const contact = {
+                    factionKey: targetKey,
+                    transponderCode: targetEntry.transponderCode ??
+                        (targetSignal ? `${targetSignal}${targetSuffix ? `:${targetSuffix}` : ""}` : null),
+                };
+                (disposition === "friendly" ? allies : enemies).push(contact);
+            }
+            policies[factionKey] = { ...policies[factionKey], diplomacy: { allies, enemies } };
         }
         const split = buildSplitFactionFeatureConfiguration(
             factionKeys,
-            source.defaultCapabilities,
+            defaultCapabilities,
             overrides,
+            policies,
         );
         manifest.factionConfig = split.factionConfig;
         factionFiles = split.files;

@@ -1,18 +1,66 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "defaultCapabilities": [
     "npc",
     "transponder"
   ],
   "factions": [
     {
-      "factionKey": "500001-caldari"
+      "factionKey": "500001-caldari",
+      "transponderCode": "CALDARI",
+      "startingRegion": { "regionID": 10000005, "solarSystemIDs": [30000052] },
+      "membership": {
+        "includedTypeIDs": [],
+        "excludedTypeIDs": [],
+        "typeListProfiles": [
+          {
+            "profileID": "npc-profiles-by-faction",
+            "source": "npcProfiles",
+            "match": "factionIdentity"
+          }
+        ]
+      },
+      "diplomacy": {
+        "allies": [],
+        "enemies": [
+          {
+            "factionKey": "500010-guristas",
+            "transponderCode": "GURISTAS"
+          }
+        ]
+      },
+      "leadership": [],
+      "commanders": []
     },
     {
       "factionKey": "500010-guristas",
+      "transponderCode": "GURISTAS",
+      "startingRegion": { "regionID": 10000015, "solarSystemIDs": [30001290] },
       "capabilities": [
         "npc"
-      ]
+      ],
+      "membership": {
+        "includedTypeIDs": [],
+        "excludedTypeIDs": [],
+        "typeListProfiles": [
+          {
+            "profileID": "npc-profiles-by-faction",
+            "source": "npcProfiles",
+            "match": "factionIdentity"
+          }
+        ]
+      },
+      "diplomacy": {
+        "allies": [],
+        "enemies": [
+          {
+            "factionKey": "500001-caldari",
+            "transponderCode": "CALDARI"
+          }
+        ]
+      },
+      "leadership": [],
+      "commanders": []
     }
   ]
 }
