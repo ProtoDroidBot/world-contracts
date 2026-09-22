@@ -33,8 +33,8 @@ echo "--- extract-object-ids ---"
 export SUI_NETWORK="$ENV"
 pnpm exec tsx ts-scripts/utils/extract-object-ids.ts
 
-echo "--- write-npc-deployment ---"
-pnpm exec tsx ts-scripts/utils/write-npc-deployment.ts
+echo "--- write-world-features ---"
+pnpm exec tsx ts-scripts/utils/write-world-features.ts
 
 echo "Deployed world to $ENV. Output: deployments/$ENV/"
 echo "Log: deployments/$ENV/deploy.log"

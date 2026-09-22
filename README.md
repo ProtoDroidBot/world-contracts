@@ -95,12 +95,20 @@ The current deployment contains:
 - `world_npc` (`npc`);
 - `world_assembly_access` (`assembly_access`);
 - `world_catapult` (`catapult`);
-- `world_smart_industry` (`smart_industry`); and
-- `world_transponder` (`transponder`).
+- `world_smart_industry` (`smart_industry`);
+- `world_transponder` (`transponder`);
+- `world_action_queue` (`action_queue`);
+- `world_industry_actions` (`industry_actions`);
+- `world_logistics_actions` (`logistics_actions`);
+- `world_infrastructure_actions` (`infrastructure_actions`); and
+- `world_automation` (`automation`).
 
 Each feature has an independent call package, stable type origin, and shared
-registry recorded in `deployments/<network>/npc-deployment.json`. The filename
-is historical and now covers all five features. Do not target a feature through
+registry recorded in `deployments/<network>/world-features.v1.json`. The
+manifest uses independent capability records and can represent partial
+deployments. Optional faction policy uses a default file plus one explicitly
+referenced file per canonical faction key. Historical `npc-deployment.json`
+schemas remain migration inputs. Do not target a feature through
 the base package unless the deployment manifest explicitly identifies that
 package as the feature call target.
 

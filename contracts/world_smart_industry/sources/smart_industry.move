@@ -34,10 +34,15 @@ const ETooManyItems: vector<u8> = b"Each inventory or recipe vector is limited t
 const EInvalidBlueprint: vector<u8> = b"Blueprint and recipe runtime are inconsistent";
 #[error(code = 10)]
 const EInvalidProduction: vector<u8> = b"Production state, counters, or timing are inconsistent";
+#[error(code = 11)]
+const EInvalidLane: vector<u8> = b"Industry lanes must start at one and be strictly increasing";
 
 const MAX_ITEMS: u64 = 256;
 const MAX_FUTURE_SKEW_MS: u64 = 30_000;
 const PRODUCTION_KEY: u8 = 0;
+const LANE_PRODUCTION_KEY: u8 = 1;
+const LANE_STATE_KEY: u8 = 2;
+const MAX_LANES: u64 = 16;
 
 /// Uses a distinct registry key type so the existing Assembly retains its ID.
 /// BCS layout is one Sui ID; clients may derive the sidecar address in advance.
@@ -104,6 +109,30 @@ public struct Production has copy, drop, store {
 public struct ProductionRecord has copy, drop, store {
     revision: u64,
     production: Production,
+}
+
+public struct LaneProduction has copy, drop, store {
+    lane_id: u64,
+    production: Production,
+}
+
+public struct LaneProductionRecord has copy, drop, store {
+    revision: u64,
+    lanes: vector<LaneProduction>,
+}
+
+/// Complete per-lane recipe, escrow and production observation. This is a
+/// dynamic field so deployed SmartIndustry and Snapshot layouts remain valid.
+public struct LaneState has copy, drop, store {
+    lane_id: u64,
+    snapshot: Snapshot,
+    production: Production,
+}
+
+/// Readers must match this revision with SmartIndustry before combining reads.
+public struct LaneStateRecord has copy, drop, store {
+    revision: u64,
+    lanes: vector<LaneState>,
 }
 
 public struct SmartIndustryCreatedEvent has copy, drop {
@@ -187,6 +216,21 @@ public fun idle_production(): Production {
     new_production(0, 0, 0, 0, 0, 0, string::utf8(b""))
 }
 
+public fun new_lane_production(lane_id: u64, production: Production): LaneProduction {
+    assert!(lane_id > 0 && lane_id <= MAX_LANES, EInvalidLane);
+    LaneProduction { lane_id, production }
+}
+
+public fun new_lane_state(
+    lane_id: u64,
+    snapshot: Snapshot,
+    production: Production,
+): LaneState {
+    assert!(lane_id > 0 && lane_id <= MAX_LANES, EInvalidLane);
+    validate_production_snapshot(&production, &snapshot);
+    LaneState { lane_id, snapshot, production }
+}
+
 public fun new_item_stack(type_id: u64, quantity: u64): ItemStack {
     assert!(type_id > 0 && quantity > 0, EInvalidStack);
     ItemStack { type_id, quantity }
@@ -267,8 +311,87 @@ public fun create_with_production(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    create_with_lanes(
+        registry,
+        assembly,
+        acl,
+        observed_at_ms,
+        snapshot,
+        vector[new_lane_production(1, production)],
+        clock,
+        ctx,
+    );
+}
+
+public fun create_with_lanes(
+    registry: &mut SmartIndustryRegistry,
+    assembly: &Assembly,
+    acl: &AdminACL,
+    observed_at_ms: u64,
+    snapshot: Snapshot,
+    lanes: vector<LaneProduction>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
     acl.verify_sponsor(ctx);
-    validate_production_snapshot(&production, &snapshot);
+    validate_lane_productions(&lanes, &snapshot);
+    let synced_at_ms = clock::timestamp_ms(clock);
+    validate_observation(observed_at_ms, synced_at_ms);
+    let assembly_id = object::id(assembly);
+    let assembly_key = assembly.key();
+    let type_id = assembly.type_id();
+    let id = derived_object::claim(&mut registry.id, new_industry_key(assembly_id));
+    let industry_id = object::uid_to_inner(&id);
+    let mut industry = SmartIndustry {
+        id,
+        assembly_id,
+        assembly_key,
+        type_id,
+        assembly_status: parent_status(assembly),
+        revision: 1,
+        observed_at_ms,
+        synced_at_ms,
+        snapshot,
+    };
+    let lane_one = lanes[0].production;
+    dynamic_field::add(
+        &mut industry.id,
+        PRODUCTION_KEY,
+        ProductionRecord { revision: 1, production: lane_one },
+    );
+    dynamic_field::add(
+        &mut industry.id,
+        LANE_PRODUCTION_KEY,
+        LaneProductionRecord { revision: 1, lanes },
+    );
+    event::emit(SmartIndustryCreatedEvent {
+        industry_id,
+        assembly_id,
+        assembly_key,
+        type_id,
+        revision: 1,
+        observed_at_ms,
+        synced_at_ms,
+    });
+    transfer::share_object(industry);
+}
+
+/// Creates a sidecar whose complete blueprint, recipe, escrow and production
+/// state is isolated per lane. The root snapshot and legacy dynamic fields
+/// remain lane-one projections for compatibility readers.
+public fun create_with_lane_states(
+    registry: &mut SmartIndustryRegistry,
+    assembly: &Assembly,
+    acl: &AdminACL,
+    observed_at_ms: u64,
+    lanes: vector<LaneState>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    acl.verify_sponsor(ctx);
+    validate_lane_states(&lanes);
+    let snapshot = lanes[0].snapshot;
+    let productions = lane_productions_from_states(&lanes);
     let synced_at_ms = clock::timestamp_ms(clock);
     validate_observation(observed_at_ms, synced_at_ms);
     let assembly_id = object::id(assembly);
@@ -290,7 +413,17 @@ public fun create_with_production(
     dynamic_field::add(
         &mut industry.id,
         PRODUCTION_KEY,
-        ProductionRecord { revision: 1, production },
+        ProductionRecord { revision: 1, production: productions[0].production },
+    );
+    dynamic_field::add(
+        &mut industry.id,
+        LANE_PRODUCTION_KEY,
+        LaneProductionRecord { revision: 1, lanes: productions },
+    );
+    dynamic_field::add(
+        &mut industry.id,
+        LANE_STATE_KEY,
+        LaneStateRecord { revision: 1, lanes },
     );
     event::emit(SmartIndustryCreatedEvent {
         industry_id,
@@ -353,8 +486,32 @@ public fun sync_with_production(
     clock: &Clock,
     ctx: &TxContext,
 ) {
+    sync_with_lanes(
+        industry,
+        assembly,
+        acl,
+        expected_revision,
+        observed_at_ms,
+        snapshot,
+        vector[new_lane_production(1, production)],
+        clock,
+        ctx,
+    );
+}
+
+public fun sync_with_lanes(
+    industry: &mut SmartIndustry,
+    assembly: &Assembly,
+    acl: &AdminACL,
+    expected_revision: u64,
+    observed_at_ms: u64,
+    snapshot: Snapshot,
+    lanes: vector<LaneProduction>,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
     acl.verify_sponsor(ctx);
-    validate_production_snapshot(&production, &snapshot);
+    validate_lane_productions(&lanes, &snapshot);
     assert!(
         industry.assembly_id == object::id(assembly)
             && industry.assembly_key == assembly.key()
@@ -370,13 +527,99 @@ public fun sync_with_production(
     industry.observed_at_ms = observed_at_ms;
     industry.synced_at_ms = synced_at_ms;
     industry.snapshot = snapshot;
-    if (dynamic_field::exists_(&industry.id, PRODUCTION_KEY)) {
+    let lane_one = lanes[0].production;
+    if (dynamic_field::exists(&industry.id, PRODUCTION_KEY)) {
         dynamic_field::remove<u8, ProductionRecord>(&mut industry.id, PRODUCTION_KEY);
     };
     dynamic_field::add(
         &mut industry.id,
         PRODUCTION_KEY,
-        ProductionRecord { revision: industry.revision, production },
+        ProductionRecord { revision: industry.revision, production: lane_one },
+    );
+    if (dynamic_field::exists(&industry.id, LANE_PRODUCTION_KEY)) {
+        dynamic_field::remove<u8, LaneProductionRecord>(
+            &mut industry.id,
+            LANE_PRODUCTION_KEY,
+        );
+    };
+    dynamic_field::add(
+        &mut industry.id,
+        LANE_PRODUCTION_KEY,
+        LaneProductionRecord { revision: industry.revision, lanes },
+    );
+    // A legacy writer cannot provide authoritative per-lane snapshots. Remove
+    // any prior record so current readers fail closed and request a full sync.
+    if (dynamic_field::exists(&industry.id, LANE_STATE_KEY)) {
+        dynamic_field::remove<u8, LaneStateRecord>(&mut industry.id, LANE_STATE_KEY);
+    };
+    event::emit(SmartIndustrySyncedEvent {
+        industry_id: object::id(industry),
+        assembly_id: industry.assembly_id,
+        revision: industry.revision,
+        observed_at_ms,
+        synced_at_ms,
+    });
+}
+
+/// Atomically replaces every lane and all compatibility projections.
+public fun sync_with_lane_states(
+    industry: &mut SmartIndustry,
+    assembly: &Assembly,
+    acl: &AdminACL,
+    expected_revision: u64,
+    observed_at_ms: u64,
+    lanes: vector<LaneState>,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    acl.verify_sponsor(ctx);
+    validate_lane_states(&lanes);
+    assert!(
+        industry.assembly_id == object::id(assembly)
+            && industry.assembly_key == assembly.key()
+            && industry.type_id == assembly.type_id(),
+        EAssemblyMismatch,
+    );
+    assert!(industry.revision == expected_revision, EStaleRevision);
+    assert!(observed_at_ms > industry.observed_at_ms, EStaleObservation);
+    let synced_at_ms = clock::timestamp_ms(clock);
+    validate_observation(observed_at_ms, synced_at_ms);
+    let snapshot = lanes[0].snapshot;
+    let productions = lane_productions_from_states(&lanes);
+    industry.assembly_status = parent_status(assembly);
+    industry.revision = industry.revision + 1;
+    industry.observed_at_ms = observed_at_ms;
+    industry.synced_at_ms = synced_at_ms;
+    industry.snapshot = snapshot;
+    if (dynamic_field::exists(&industry.id, PRODUCTION_KEY)) {
+        dynamic_field::remove<u8, ProductionRecord>(&mut industry.id, PRODUCTION_KEY);
+    };
+    dynamic_field::add(
+        &mut industry.id,
+        PRODUCTION_KEY,
+        ProductionRecord {
+            revision: industry.revision,
+            production: productions[0].production,
+        },
+    );
+    if (dynamic_field::exists(&industry.id, LANE_PRODUCTION_KEY)) {
+        dynamic_field::remove<u8, LaneProductionRecord>(
+            &mut industry.id,
+            LANE_PRODUCTION_KEY,
+        );
+    };
+    dynamic_field::add(
+        &mut industry.id,
+        LANE_PRODUCTION_KEY,
+        LaneProductionRecord { revision: industry.revision, lanes: productions },
+    );
+    if (dynamic_field::exists(&industry.id, LANE_STATE_KEY)) {
+        dynamic_field::remove<u8, LaneStateRecord>(&mut industry.id, LANE_STATE_KEY);
+    };
+    dynamic_field::add(
+        &mut industry.id,
+        LANE_STATE_KEY,
+        LaneStateRecord { revision: industry.revision, lanes },
     );
     event::emit(SmartIndustrySyncedEvent {
         industry_id: object::id(industry),
@@ -448,7 +691,7 @@ public fun production(industry: &SmartIndustry): Production {
 }
 
 public fun has_production(industry: &SmartIndustry): bool {
-    dynamic_field::exists_(&industry.id, PRODUCTION_KEY)
+    dynamic_field::exists(&industry.id, PRODUCTION_KEY)
 }
 
 public fun production_job_id(value: &Production): u64 { value.job_id }
@@ -469,6 +712,48 @@ public fun production_record_revision(value: &ProductionRecord): u64 { value.rev
 
 public fun production_record_value(value: &ProductionRecord): Production { value.production }
 
+public fun has_lane_productions(industry: &SmartIndustry): bool {
+    dynamic_field::exists(&industry.id, LANE_PRODUCTION_KEY)
+}
+
+public fun lane_productions(industry: &SmartIndustry): &vector<LaneProduction> {
+    &dynamic_field::borrow<u8, LaneProductionRecord>(&industry.id, LANE_PRODUCTION_KEY).lanes
+}
+
+public fun lane_production_lane_id(value: &LaneProduction): u64 { value.lane_id }
+
+public fun lane_production_value(value: &LaneProduction): Production { value.production }
+
+public fun lane_production_record_revision(value: &LaneProductionRecord): u64 { value.revision }
+
+public fun lane_production_record_lanes(
+    value: &LaneProductionRecord,
+): &vector<LaneProduction> {
+    &value.lanes
+}
+
+public fun has_lane_states(industry: &SmartIndustry): bool {
+    dynamic_field::exists(&industry.id, LANE_STATE_KEY)
+}
+
+public fun lane_states(industry: &SmartIndustry): &vector<LaneState> {
+    &dynamic_field::borrow<u8, LaneStateRecord>(&industry.id, LANE_STATE_KEY).lanes
+}
+
+public fun lane_state_lane_id(value: &LaneState): u64 { value.lane_id }
+
+public fun lane_state_snapshot(value: &LaneState): &Snapshot { &value.snapshot }
+
+public fun lane_state_production(value: &LaneState): Production { value.production }
+
+public fun lane_state_record_revision(value: &LaneStateRecord): u64 { value.revision }
+
+public fun lane_state_record_lanes(value: &LaneStateRecord): &vector<LaneState> {
+    &value.lanes
+}
+
+public fun max_lanes(): u64 { MAX_LANES }
+
 #[test_only]
 public fun remove_production_for_testing(industry: &mut SmartIndustry) {
     dynamic_field::remove<u8, ProductionRecord>(&mut industry.id, PRODUCTION_KEY);
@@ -478,6 +763,59 @@ public fun remove_production_for_testing(industry: &mut SmartIndustry) {
 
 fun validate_production_snapshot(production: &Production, snapshot: &Snapshot) {
     assert!(production.state == 0 || snapshot.blueprint_id > 0, EInvalidProduction);
+}
+
+fun validate_lane_productions(lanes: &vector<LaneProduction>, snapshot: &Snapshot) {
+    assert!(
+        !lanes.is_empty() && lanes.length() <= MAX_LANES && lanes[0].lane_id == 1,
+        EInvalidLane,
+    );
+    let mut previous = 0;
+    let mut index = 0;
+    while (index < lanes.length()) {
+        let lane = &lanes[index];
+        assert!(lane.lane_id > previous && lane.lane_id <= MAX_LANES, EInvalidLane);
+        validate_production_snapshot(&lane.production, snapshot);
+        previous = lane.lane_id;
+        index = index + 1;
+    };
+}
+
+fun validate_lane_states(lanes: &vector<LaneState>) {
+    assert!(
+        !lanes.is_empty() && lanes.length() <= MAX_LANES && lanes[0].lane_id == 1,
+        EInvalidLane,
+    );
+    let owner_id = lanes[0].snapshot.owner_id;
+    let solar_system_id = lanes[0].snapshot.solar_system_id;
+    let mut previous = 0;
+    let mut index = 0;
+    while (index < lanes.length()) {
+        let lane = &lanes[index];
+        assert!(lane.lane_id > previous && lane.lane_id <= MAX_LANES, EInvalidLane);
+        assert!(
+            lane.snapshot.owner_id == owner_id
+                && lane.snapshot.solar_system_id == solar_system_id,
+            EInvalidIdentity,
+        );
+        validate_production_snapshot(&lane.production, &lane.snapshot);
+        previous = lane.lane_id;
+        index = index + 1;
+    };
+}
+
+fun lane_productions_from_states(lanes: &vector<LaneState>): vector<LaneProduction> {
+    let mut productions = vector[];
+    let mut index = 0;
+    while (index < lanes.length()) {
+        let lane = &lanes[index];
+        productions.push_back(LaneProduction {
+            lane_id: lane.lane_id,
+            production: lane.production,
+        });
+        index = index + 1;
+    };
+    productions
 }
 
 fun parent_status(assembly: &Assembly): u8 {

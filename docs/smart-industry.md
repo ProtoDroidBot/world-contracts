@@ -75,10 +75,10 @@ Industry type origin, and `SmartIndustryRegistry`. Set
 and vector types use the origin; function calls use the implementation. These
 settings do not publish or upgrade anything themselves.
 
-EveJS reads the Industry triple from the combined public
-`npc-deployment.json` beside its synchronized `world.private.json`. The filename
-is historical and covers all five split features; there is no current standalone
-`industry.json` deployment file. `EVEJS_SUI_INDUSTRY_CONFIG_PATH` may select an
+EveJS reads the Industry triple from the `smartIndustry` capability in public
+`world-features.v1.json` beside its synchronized `world.private.json`. There is
+no standalone `industry.json` deployment file. Historical `npc-deployment.json`
+is accepted as a migration fallback. `EVEJS_SUI_INDUSTRY_CONFIG_PATH` may select an
 explicit compatible manifest. Environment variables override their respective
 fields, but a malformed or base-world-mismatched file is always rejected. See
 [Package topology and deployment identity](package-topology.md) for the complete

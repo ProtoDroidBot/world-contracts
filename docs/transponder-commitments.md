@@ -46,7 +46,7 @@ No reveal or location-publication behavior is part of this module.
 
 ## Deployment
 
-A fresh deployment publishes the module from `contracts/world_transponder`, creates a shared `TransponderRegistry`, and records the feature package as both call target and type origin in the combined `npc-deployment.json` manifest. It depends on the base world and `world_npc`; it is not part of the base-world package.
+A fresh deployment publishes the module from `contracts/world_transponder`, creates a shared `TransponderRegistry`, and records the feature package as both call target and type origin in the `transponder` capability of `world-features.v1.json`. It depends on the base world and `world_npc`; it is not part of the base-world package.
 
 In an upgrade, calls target the latest compatible transponder package while `TransponderScopeKey` derivation and `TransponderCommitment` type checks retain the first package that introduced the module. Preserve the existing registry. Changing the base-world or NPC dependency may require a compatible feature upgrade; the repository does not yet provide an automated per-feature upgrade command.
 

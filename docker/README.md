@@ -44,8 +44,9 @@ Small JSON with a `network` name and these groups of IDs:
 
 Your services or tests read these hex IDs when calling the chain (e.g. which package to target, which objects to pass into transactions).
 
-The integration deployment also writes `deployments/localnet/npc-deployment.json`,
-the historical-name combined feature manifest used by EveJS. The snapshot export
+The integration deployment also writes `deployments/localnet/world-features.v1.json`,
+the versioned capability manifest used by EveJS. Historical `npc-deployment.json`
+is a migration input. The snapshot export
 currently copies `extracted-object-ids.json`; consumers that need stable feature
 type origins and base-world bindings should retain or construct the combined
 manifest as part of their test fixture. See

@@ -25,7 +25,7 @@ EveJS verifies that finalized event before committing the game item owner/locati
 
 ## Deployment and testing
 
-This module is published from `contracts/world_assembly_access`. It depends on both the base `world` package and `world_npc`. Use `accessPackageId` for calls, `accessTypeOrigin` for derived keys/types, and `accessRegistryId` for the shared registry. A fresh split deployment writes all three to the combined `npc-deployment.json` manifest; an upgrade changes only the call package.
+This module is published from `contracts/world_assembly_access`. It depends on both the base `world` package and `world_npc`. Use the `assemblyAccess` capability package for calls, its type origin for derived keys/types, and its registry ID for the shared registry. A fresh split deployment writes the complete record to `world-features.v1.json`; an upgrade changes only the call package.
 
 Run its Move tests in the efctl Sui environment:
 

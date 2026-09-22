@@ -14,7 +14,7 @@ Jump authorization requires the source Gate online and its stored route current.
 
 ## Deployment and testing
 
-This module is published from `contracts/world_catapult` and depends on the base `world` package. Use `catapultPackageId` for calls, `catapultTypeOrigin` for derived keys/types, and `catapultRegistryId` for the shared registry. A fresh split deployment writes all three to the combined `npc-deployment.json` manifest; an upgrade changes only the call package.
+This module is published from `contracts/world_catapult` and depends on the base `world` package. Use the `catapult` capability package for calls, its type origin for derived keys/types, and its registry ID for the shared registry. A fresh split deployment writes the complete record to `world-features.v1.json`; an upgrade changes only the call package.
 
 Run its Move tests in the efctl Sui environment:
 

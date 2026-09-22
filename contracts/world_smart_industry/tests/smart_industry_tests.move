@@ -526,6 +526,147 @@ fun production_accepts_continuous_and_completed_batches() {
 }
 
 #[test]
+fun multiple_production_lanes_sync_in_one_revision_and_keep_lane_one_compatibility() {
+    let mut ts = ts::begin(governor());
+    let (parent, _) = setup(&mut ts);
+    let industry_id = create_record(&mut ts, parent, admin(), 90_000);
+    ts::next_tx(&mut ts, admin());
+    let mut industry = ts::take_shared_by_id<SmartIndustry>(&ts, industry_id);
+    let assembly = ts::take_shared_by_id<Assembly>(&ts, parent);
+    let acl = ts::take_shared<AdminACL>(&ts);
+    let mut clock = clock::create_for_testing(ts.ctx());
+    clock.set_for_testing(CHAIN_TIME);
+    smart_industry::sync_with_lanes(
+        &mut industry,
+        &assembly,
+        &acl,
+        1,
+        91_000,
+        sample(5),
+        vector[
+            smart_industry::new_lane_production(
+                1,
+                smart_industry::new_production(
+                    8, 1, 3, 0, 91_000, 151_000, b"".to_string(),
+                ),
+            ),
+            smart_industry::new_lane_production(
+                2,
+                smart_industry::new_production(
+                    9, 1, 0, 4, 92_000, 152_000, b"".to_string(),
+                ),
+            ),
+        ],
+        &clock,
+        ts.ctx(),
+    );
+    assert!(industry.has_lane_productions(), 0);
+    assert_eq!(industry.revision(), 2);
+    assert_eq!(smart_industry::production_job_id(&industry.production()), 8);
+    let lanes = industry.lane_productions();
+    assert_eq!(lanes.length(), 2);
+    assert_eq!(smart_industry::lane_production_lane_id(&lanes[1]), 2);
+    assert_eq!(
+        smart_industry::production_job_id(&smart_industry::lane_production_value(&lanes[1])),
+        9,
+    );
+    clock.destroy_for_testing();
+    ts::return_shared(acl);
+    ts::return_shared(assembly);
+    ts::return_shared(industry);
+    ts.end();
+}
+
+#[test]
+fun complete_lane_states_keep_blueprints_and_escrow_independent() {
+    let mut ts = ts::begin(governor());
+    let (parent, _) = setup(&mut ts);
+    let industry_id = create_record(&mut ts, parent, admin(), 90_000);
+    ts::next_tx(&mut ts, admin());
+    let mut industry = ts::take_shared_by_id<SmartIndustry>(&ts, industry_id);
+    let assembly = ts::take_shared_by_id<Assembly>(&ts, parent);
+    let acl = ts::take_shared<AdminACL>(&ts);
+    let mut clock = clock::create_for_testing(ts.ctx());
+    clock.set_for_testing(CHAIN_TIME);
+    let empty_lane = smart_industry::new_snapshot(
+        2001,
+        30000142,
+        0,
+        0,
+        vector[],
+        vector[],
+        vector[],
+        vector[],
+    );
+    let producing_lane = smart_industry::new_snapshot(
+        2001,
+        30000142,
+        9002,
+        120,
+        vector[smart_industry::new_item_stack(30, 17)],
+        vector[smart_industry::new_item_stack(40, 6)],
+        vector[smart_industry::new_recipe_slot(30, 3, 300)],
+        vector[smart_industry::new_recipe_slot(40, 2, 200)],
+    );
+    smart_industry::sync_with_lane_states(
+        &mut industry,
+        &assembly,
+        &acl,
+        1,
+        91_000,
+        vector[
+            smart_industry::new_lane_state(
+                1,
+                empty_lane,
+                smart_industry::idle_production(),
+            ),
+            smart_industry::new_lane_state(
+                2,
+                producing_lane,
+                smart_industry::new_production(
+                    9, 1, 0, 4, 92_000, 152_000, b"".to_string(),
+                ),
+            ),
+        ],
+        &clock,
+        ts.ctx(),
+    );
+    assert!(industry.has_lane_states(), 0);
+    assert_eq!(smart_industry::blueprint_id(industry.snapshot()), 0);
+    assert_eq!(smart_industry::production_state(&industry.production()), 0);
+    let lanes = industry.lane_states();
+    assert_eq!(lanes.length(), 2);
+    assert_eq!(smart_industry::lane_state_lane_id(&lanes[1]), 2);
+    assert_eq!(smart_industry::blueprint_id(smart_industry::lane_state_snapshot(&lanes[1])), 9002);
+    assert_eq!(
+        smart_industry::item_quantity(
+            &smart_industry::inputs(smart_industry::lane_state_snapshot(&lanes[1]))[0],
+        ),
+        17,
+    );
+    let lane_two_production = smart_industry::lane_state_production(&lanes[1]);
+    assert_eq!(smart_industry::production_job_id(&lane_two_production), 9);
+    let productions = industry.lane_productions();
+    assert_eq!(
+        smart_industry::production_job_id(
+            &smart_industry::lane_production_value(&productions[1]),
+        ),
+        9,
+    );
+    clock.destroy_for_testing();
+    ts::return_shared(acl);
+    ts::return_shared(assembly);
+    ts::return_shared(industry);
+    ts.end();
+}
+
+#[test]
+#[expected_failure(abort_code = smart_industry::EInvalidLane)]
+fun production_lanes_reject_zero_lane() {
+    smart_industry::new_lane_production(0, smart_industry::idle_production());
+}
+
+#[test]
 #[expected_failure(abort_code = smart_industry::EInvalidProduction)]
 fun production_rejects_running_finished_batch() {
     smart_industry::new_production(1, 1, 3, 3, 1, 2, b"".to_string());

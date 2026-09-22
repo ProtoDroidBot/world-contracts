@@ -10,7 +10,7 @@ import {
     readIndustry,
     type IndustryWorld,
 } from "./client";
-import { parseIndustrySnapshot, parseIndustryProduction, u64 } from "./snapshot";
+import { parseIndustrySnapshot, parseIndustryProduction, parseIndustryLaneStates, u64 } from "./snapshot";
 
 async function main() {
     const { positionals, values } = parseArgs({
@@ -26,7 +26,7 @@ async function main() {
         console.log(
             "npm run industry -- read --assembly <assembly-object-id>\n" +
                 "npm run industry -- sync --assembly <assembly-object-id> --snapshot <file.json> [--execute]\n" +
-                "Snapshot file: {observed_at_ms: decimal-string, snapshot: {owner_id, solar_system_id, blueprint_id, run_time, inputs, outputs, blueprint_inputs, blueprint_outputs}, production: null or {job_id,state,requested_runs,completed_runs,run_started_at_ms,run_end_at_ms,stop_reason}}\n" +
+                "Snapshot file: {observed_at_ms, lanes: [{lane_id, snapshot: {owner_id, solar_system_id, blueprint_id, run_time, inputs, outputs, blueprint_inputs, blueprint_outputs}, production}]} (legacy snapshot/production is accepted as lane one)\n" +
                 "Sync prints a transaction plan unless --execute is provided. Live game sync uses the EveJS worker."
         );
         return;
@@ -87,9 +87,19 @@ async function main() {
         throw new Error("Snapshot file exceeds 256 KiB");
     const document = JSON.parse(readFileSync(values.snapshot, "utf8"));
     const observedAtMs = u64(document.observed_at_ms, "observed_at_ms", true);
-    const snapshot = parseIndustrySnapshot(document.snapshot);
-    const production = parseIndustryProduction(document.production);
-    const tx = buildIndustryTransaction(world, values.assembly, snapshot, observedAtMs, previous, production);
+    const lanes = document.lanes === undefined ? undefined : parseIndustryLaneStates(document.lanes);
+    const snapshot = parseIndustrySnapshot(document.snapshot ?? lanes?.[0]?.snapshot);
+    const production = parseIndustryProduction(document.production ?? lanes?.[0]?.production);
+    const tx = buildIndustryTransaction(
+        world,
+        values.assembly,
+        snapshot,
+        observedAtMs,
+        previous,
+        production,
+        undefined,
+        lanes,
+    );
     if (!values.execute) {
         console.log(
             JSON.stringify(
@@ -101,6 +111,7 @@ async function main() {
                     observedAtMs,
                     snapshot,
                     production,
+                    lanes,
                     transaction: tx.getData(),
                 },
                 null,

@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
     assertPublishedModule,
-    buildFreshNpcDeployment,
-} from "../ts-scripts/utils/write-npc-deployment";
+    buildSplitFactionFeatureConfiguration,
+    buildFreshWorldFeatureManifest,
+    migrateLegacyNpcDeployment,
+} from "../ts-scripts/utils/write-world-features";
 
 const PACKAGE = `0x${"1".repeat(64)}`;
 const REGISTRY = `0x${"2".repeat(64)}`;
@@ -61,9 +63,8 @@ const IDS = {
     },
 };
 
-test("fresh NPC deployment records independent packages, type origins and registries", () => {
-    assert.deepEqual(
-        buildFreshNpcDeployment(
+test("fresh world-feature deployment records independent packages, type origins and registries", () => {
+    const manifest = buildFreshWorldFeatureManifest(
             "A1B2C3D4",
             IDS,
             PACKAGE,
@@ -77,51 +78,74 @@ test("fresh NPC deployment records independent packages, type origins and regist
             LOGISTICS_PACKAGE,
             INFRASTRUCTURE_PACKAGE,
             AUTOMATION_PACKAGE,
-        ),
-        {
-            schemaVersion: 3,
-            chainId: "a1b2c3d4",
-            worldPackageId: PACKAGE,
-            objectRegistryId: REGISTRY,
-            adminAclId: ACL,
-            packageId: NPC_PACKAGE,
-            typeOrigin: NPC_PACKAGE,
-            npcRegistryId: NPC_REGISTRY,
-            accessPackageId: ACCESS_PACKAGE,
-            accessTypeOrigin: ACCESS_PACKAGE,
-            accessRegistryId: ACCESS_REGISTRY,
-            catapultPackageId: CATAPULT_PACKAGE,
-            catapultTypeOrigin: CATAPULT_PACKAGE,
-            catapultRegistryId: CATAPULT_REGISTRY,
-            industryPackageId: INDUSTRY_PACKAGE,
-            industryTypeOrigin: INDUSTRY_PACKAGE,
-            industryRegistryId: INDUSTRY_REGISTRY,
-            transponderPackageId: TRANSPONDER_PACKAGE,
-            transponderTypeOrigin: TRANSPONDER_PACKAGE,
-            transponderRegistryId: TRANSPONDER_REGISTRY,
-            actionPackageId: ACTION_PACKAGE,
-            actionTypeOrigin: ACTION_PACKAGE,
-            actionRegistryId: ACTION_REGISTRY,
-            industryActionsPackageId: INDUSTRY_ACTIONS_PACKAGE,
-            industryActionsTypeOrigin: INDUSTRY_ACTIONS_PACKAGE,
-            industryActionsRegistryId: INDUSTRY_ACTIONS_REGISTRY,
-            logisticsPackageId: LOGISTICS_PACKAGE,
-            logisticsTypeOrigin: LOGISTICS_PACKAGE,
-            logisticsRegistryId: LOGISTICS_REGISTRY,
-            infrastructurePackageId: INFRASTRUCTURE_PACKAGE,
-            infrastructureTypeOrigin: INFRASTRUCTURE_PACKAGE,
-            infrastructureRegistryId: INFRASTRUCTURE_REGISTRY,
-            automationPackageId: AUTOMATION_PACKAGE,
-            automationTypeOrigin: AUTOMATION_PACKAGE,
-            automationRegistryId: AUTOMATION_REGISTRY,
-        },
-    );
+        );
+    assert.equal(manifest.format, "eve-frontier-world-features");
+    assert.equal(manifest.schemaVersion, 1);
+    assert.equal(manifest.chainId, "a1b2c3d4");
+    assert.deepEqual(manifest.world, {
+        packageId: PACKAGE,
+        objectRegistryId: REGISTRY,
+        adminAclId: ACL,
+    });
+    assert.deepEqual(manifest.capabilities.npc, {
+        status: "deployed", packageId: NPC_PACKAGE,
+        typeOrigin: NPC_PACKAGE, registryId: NPC_REGISTRY,
+    });
+    assert.deepEqual(manifest.capabilities.assemblyAccess, {
+        status: "deployed", packageId: ACCESS_PACKAGE,
+        typeOrigin: ACCESS_PACKAGE, registryId: ACCESS_REGISTRY,
+    });
+    assert.deepEqual(manifest.capabilities.automation, {
+        status: "deployed", packageId: AUTOMATION_PACKAGE,
+        typeOrigin: AUTOMATION_PACKAGE, registryId: AUTOMATION_REGISTRY,
+    });
+    assert.equal(Object.keys(manifest.capabilities).length, 10);
 });
 
-test("fresh NPC manifest rejects mismatched packages and unsafe identities", () => {
+test("legacy migration preserves complete features and isolates incomplete ones", () => {
+    const migrated = migrateLegacyNpcDeployment({
+        schemaVersion: 3,
+        chainId: "A1B2C3D4",
+        worldPackageId: PACKAGE,
+        objectRegistryId: REGISTRY,
+        adminAclId: ACL,
+        packageId: NPC_PACKAGE,
+        typeOrigin: NPC_PACKAGE,
+        npcRegistryId: NPC_REGISTRY,
+        accessPackageId: ACCESS_PACKAGE,
+        accessTypeOrigin: ACCESS_PACKAGE,
+        // Deliberately missing accessRegistryId.
+        catapultPackageId: CATAPULT_PACKAGE,
+        catapultTypeOrigin: CATAPULT_PACKAGE,
+        catapultRegistryId: CATAPULT_REGISTRY,
+    });
+    assert.equal(migrated.capabilities.npc.packageId, NPC_PACKAGE);
+    assert.equal(migrated.capabilities.catapult.registryId, CATAPULT_REGISTRY);
+    assert.equal(migrated.capabilities.assemblyAccess, undefined);
+    assert.deepEqual(migrated.migration?.incompleteCapabilities, ["assemblyAccess"]);
+});
+
+test("split faction configs reference and inherit the default policy", () => {
+    const split = buildSplitFactionFeatureConfiguration(
+        ["500010-guristas", "500001-caldari"],
+        ["transponder", "npc"],
+        { "500010-guristas": ["npc"] },
+    );
+    assert.deepEqual(split.factionConfig.default, {
+        id: "default", path: "factions/default.v1.json",
+    });
+    assert.deepEqual(split.factionConfig.factions["500001-caldari"], {
+        path: "factions/500001-caldari.v1.json", fallback: "default",
+    });
+    assert.deepEqual(split.files["factions/default.v1.json"].capabilities, ["npc", "transponder"]);
+    assert.equal("capabilities" in split.files["factions/500001-caldari.v1.json"], false);
+    assert.deepEqual(split.files["factions/500010-guristas.v1.json"].capabilities, ["npc"]);
+});
+
+test("fresh world-feature manifest rejects mismatched packages and unsafe identities", () => {
     assert.throws(
         () =>
-            buildFreshNpcDeployment(
+            buildFreshWorldFeatureManifest(
                 "a1b2c3d4",
                 IDS,
                 `0x${"f".repeat(64)}`,
@@ -139,7 +163,7 @@ test("fresh NPC manifest rejects mismatched packages and unsafe identities", () 
         /different packages/,
     );
     assert.throws(
-        () => buildFreshNpcDeployment(
+        () => buildFreshWorldFeatureManifest(
             "not-a-chain", IDS, PACKAGE, NPC_PACKAGE, ACCESS_PACKAGE,
             CATAPULT_PACKAGE, INDUSTRY_PACKAGE, TRANSPONDER_PACKAGE,
             ACTION_PACKAGE, INDUSTRY_ACTIONS_PACKAGE,
@@ -148,7 +172,7 @@ test("fresh NPC manifest rejects mismatched packages and unsafe identities", () 
         /chain ID/,
     );
     assert.throws(
-        () => buildFreshNpcDeployment("a1b2c3d4", {
+        () => buildFreshWorldFeatureManifest("a1b2c3d4", {
             ...IDS,
             world: { ...IDS.world, adminAcl: "0x0" },
         }, PACKAGE, NPC_PACKAGE, ACCESS_PACKAGE, CATAPULT_PACKAGE, INDUSTRY_PACKAGE,

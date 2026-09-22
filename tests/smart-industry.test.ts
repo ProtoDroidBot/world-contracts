@@ -3,12 +3,14 @@ import { test } from "node:test";
 import {
     buildIndustryTransaction,
     deriveIndustryId,
+    deriveLaneProductionFieldId,
+    deriveLaneStateFieldId,
     deriveProductionFieldId,
     objectId,
     readIndustry,
     type IndustryState,
 } from "../ts-scripts/industry/client";
-import { parseIndustrySnapshot, parseIndustryProduction, u64 } from "../ts-scripts/industry/snapshot";
+import { parseIndustrySnapshot, parseIndustryProduction, parseIndustryLaneStates, u64 } from "../ts-scripts/industry/snapshot";
 
 const world = {
     packageId: "0x123",
@@ -37,6 +39,10 @@ const previous: IndustryState = {
     snapshot: empty,
     production: null,
     productionMirrored: false,
+    productions: [{ lane_id: "1", production: null }],
+    productionsMirrored: false,
+    lanes: [{ lane_id: "1", snapshot: empty, production: null }],
+    laneStatesMirrored: false,
 };
 
 test("snapshot keeps exact u64 values, canonical ordering and empty replacement", () => {
@@ -100,8 +106,8 @@ test("PTBs call constructors then atomic create or revision-checked sync", () =>
     const update = buildIndustryTransaction(world, assemblyId, empty, "1002", previous).getData();
     const calls = (data: typeof create) =>
         data.commands.filter((c) => c.$kind === "MoveCall").map((c) => c.MoveCall!.function);
-    assert.deepEqual(calls(create), ["new_snapshot", "idle_production", "create_with_production"]);
-    assert.deepEqual(calls(update), ["new_snapshot", "idle_production", "sync_with_production"]);
+    assert.deepEqual(calls(create), ["new_snapshot", "idle_production", "new_lane_state", "create_with_lane_states"]);
+    assert.deepEqual(calls(update), ["new_snapshot", "idle_production", "new_lane_state", "sync_with_lane_states"]);
     assert.throws(
         () => buildIndustryTransaction(world, assemblyId, empty, "1000", previous),
         /newer/
@@ -118,7 +124,9 @@ test("PTBs call constructors then atomic create or revision-checked sync", () =>
 });
 
 test("read reports absence but propagates transport/type/parent failures", async () => {
-    const client = (value: any) => ({ getObject: async ({ id }: any) => id === deriveProductionFieldId(previous.objectId)
+    const client = (value: any) => ({ getObject: async ({ id }: any) =>
+        [deriveProductionFieldId(previous.objectId), deriveLaneProductionFieldId(previous.objectId),
+            deriveLaneStateFieldId(previous.objectId)].includes(id)
         ? { error: { code: "notExists" } } : value });
     assert.equal(
         await readIndustry(client({ error: { code: "notExists" } }), world, assemblyId),
@@ -175,13 +183,16 @@ test("upgrades preserve type-origin IDs while using the latest function target",
     const calls = data.commands.filter((c) => c.$kind === "MoveCall").map((c) => c.MoveCall!);
     assert.deepEqual(
         calls.map((c) => c.function),
-        ["new_item_stack", "new_recipe_slot", "new_recipe_slot", "new_snapshot", "idle_production", "create_with_production"]
+        ["new_item_stack", "new_recipe_slot", "new_recipe_slot", "new_snapshot", "idle_production", "new_lane_state", "create_with_lane_states"]
     );
     assert.ok(calls.every((c) => c.package === objectId("0x222")));
     const vectors = data.commands
         .filter((c) => c.$kind === "MakeMoveVec")
         .map((c) => c.MakeMoveVec!);
-    assert.ok(vectors.every((v) => v.type?.startsWith(`${objectId("0x111")}::smart_industry::`)));
+    const typedVectors = vectors.filter((v) => v.type !== null);
+    assert.ok(typedVectors.length > 0);
+    assert.ok(typedVectors.every((v) => v.type?.startsWith(`${objectId("0x111")}::smart_industry::`)));
+    assert.equal(vectors.filter((v) => v.type === null).length, 1);
 });
 
 test("production builds finite and continuous runs while rejecting inconsistent stopped jobs", () => {
@@ -196,8 +207,45 @@ test("production builds finite and continuous runs while rejecting inconsistent 
     const snapshot = { ...empty, blueprint_id: "1007", run_time: "12" };
     const data = buildIndustryTransaction(world, assemblyId, snapshot, "1002", previous, production).getData();
     const calls = data.commands.filter(c => c.$kind === "MoveCall").map(c => c.MoveCall!.function);
-    assert.deepEqual(calls, ["new_snapshot", "new_production", "sync_with_production"]);
+    assert.deepEqual(calls, ["new_snapshot", "new_production", "new_lane_state", "sync_with_lane_states"]);
     assert.throws(() => buildIndustryTransaction(world, assemblyId, empty, "1002", previous, production), /blueprint/);
+});
+
+test("lane-aware PTBs preserve sorted lane identities and reject gaps at lane one", () => {
+    const snapshot = { ...empty, blueprint_id: "1007", run_time: "12" };
+    const production = { job_id: "7", state: "RUNNING" as const, requested_runs: "3", completed_runs: "1",
+        run_started_at_ms: "1000", run_end_at_ms: "13000", stop_reason: null };
+    const data = buildIndustryTransaction(world, assemblyId, snapshot, "1002", previous, null, [
+        { lane_id: "1", production: null },
+        { lane_id: "2", production },
+    ]).getData();
+    const calls = data.commands.filter(c => c.$kind === "MoveCall").map(c => c.MoveCall!.function);
+    assert.deepEqual(calls, ["new_snapshot", "idle_production", "new_lane_state",
+        "new_snapshot", "new_production", "new_lane_state", "sync_with_lane_states"]);
+    assert.throws(() => buildIndustryTransaction(world, assemblyId, snapshot, "1002", previous, null, [
+        { lane_id: "2", production },
+    ]), /lane one/i);
+});
+
+test("lane-aware PTBs keep distinct blueprints and escrow in the same revision", () => {
+    const production = { job_id: "8", state: "RUNNING" as const, requested_runs: null, completed_runs: "2",
+        run_started_at_ms: "2000", run_end_at_ms: "14000", stop_reason: null };
+    const second = { ...empty, blueprint_id: "1026", run_time: "30",
+        inputs: [{ type_id: "44", quantity: "9" }],
+        outputs: [{ type_id: "55", quantity: "4" }],
+        blueprint_inputs: [{ type_id: "44", quantity: "3", max_quantity: "300" }],
+        blueprint_outputs: [{ type_id: "55", quantity: "2", max_quantity: "200" }] };
+    const lanes = parseIndustryLaneStates([
+        { lane_id: "1", snapshot: empty, production: null },
+        { lane_id: "2", snapshot: second, production },
+    ]);
+    const data = buildIndustryTransaction(
+        world, assemblyId, empty, "1002", previous, null, undefined, lanes,
+    ).getData();
+    const calls = data.commands.filter(c => c.$kind === "MoveCall").map(c => c.MoveCall!.function);
+    assert.deepEqual(calls, ["new_snapshot", "idle_production", "new_lane_state",
+        "new_item_stack", "new_item_stack", "new_recipe_slot", "new_recipe_slot", "new_snapshot",
+        "new_production", "new_lane_state", "sync_with_lane_states"]);
 });
 
 test("production reads require the sidecar owner and matching inventory revision", async () => {
@@ -205,7 +253,9 @@ test("production reads require the sidecar owner and matching inventory revision
         run_started_at_ms: "1000", run_end_at_ms: "13000", stop_reason: "" };
     const record = { revision: "3", production: { fields: production } };
     const owner = { ObjectOwner: previous.objectId };
-    const client = { getObject: async ({ id }: any) => id === deriveProductionFieldId(previous.objectId) ? {
+    const client = { getObject: async ({ id }: any) => id === deriveLaneStateFieldId(previous.objectId)
+        ? { error: { code: "notExists" } } : id === deriveLaneProductionFieldId(previous.objectId)
+        ? { error: { code: "notExists" } } : id === deriveProductionFieldId(previous.objectId) ? {
         data: { owner, content: { dataType: "moveObject", type: `0x2::dynamic_field::Field<u8, ${objectId("0x555")}::smart_industry::ProductionRecord>`,
             fields: { name: 0, value: { fields: record } } } },
     } : { data: { owner: { Shared: { initial_shared_version: "1" } }, content: {

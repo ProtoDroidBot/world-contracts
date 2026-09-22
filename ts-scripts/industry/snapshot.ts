@@ -20,6 +20,15 @@ export type IndustryProduction = {
     run_end_at_ms: string;
     stop_reason: string | null;
 };
+export type IndustryLaneProduction = {
+    lane_id: string;
+    production: IndustryProduction | null;
+};
+export type IndustryLaneState = {
+    lane_id: string;
+    snapshot: IndustrySnapshot;
+    production: IndustryProduction | null;
+};
 
 export function u64(value: unknown, label: string, positive = false): string {
     if (
@@ -122,4 +131,52 @@ export function parseIndustryProduction(value: unknown): IndustryProduction | nu
         throw new Error("Completed production has unfinished runs");
     }
     return production;
+}
+
+export function parseIndustryLaneProductions(value: unknown): IndustryLaneProduction[] {
+    if (!Array.isArray(value) || value.length === 0 || value.length > 16) {
+        throw new Error("Production lanes must contain between one and sixteen entries");
+    }
+    let previous = 0n;
+    const lanes = value.map((entry, index) => {
+        const row = record(entry, `production lanes[${index}]`);
+        const lane_id = u64(row.lane_id, "lane_id", true);
+        if (BigInt(lane_id) <= previous || BigInt(lane_id) > 16n) {
+            throw new Error("Production lanes must be strictly increasing");
+        }
+        previous = BigInt(lane_id);
+        return { lane_id, production: parseIndustryProduction(row.production) };
+    });
+    if (lanes[0].lane_id !== "1") throw new Error("Production lane one is required");
+    return lanes;
+}
+
+export function parseIndustryLaneStates(value: unknown): IndustryLaneState[] {
+    if (!Array.isArray(value) || value.length === 0 || value.length > 16) {
+        throw new Error("Industry lanes must contain between one and sixteen entries");
+    }
+    let previous = 0n;
+    let owner: string | null = null;
+    let solarSystem: string | null = null;
+    const lanes = value.map((entry, index) => {
+        const row = record(entry, `industry lanes[${index}]`);
+        const lane_id = u64(row.lane_id, "lane_id", true);
+        if (BigInt(lane_id) <= previous || BigInt(lane_id) > 16n) {
+            throw new Error("Industry lanes must be strictly increasing");
+        }
+        previous = BigInt(lane_id);
+        const snapshot = parseIndustrySnapshot(row.snapshot);
+        const production = parseIndustryProduction(row.production);
+        if (production && snapshot.blueprint_id === "0") {
+            throw new Error("Lane production requires a selected blueprint");
+        }
+        owner ??= snapshot.owner_id;
+        solarSystem ??= snapshot.solar_system_id;
+        if (snapshot.owner_id !== owner || snapshot.solar_system_id !== solarSystem) {
+            throw new Error("All Industry lanes must share owner and solar system identity");
+        }
+        return { lane_id, snapshot, production };
+    });
+    if (lanes[0].lane_id !== "1") throw new Error("Industry lane one is required");
+    return lanes;
 }

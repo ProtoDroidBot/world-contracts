@@ -29,6 +29,6 @@ Signal predicates are bounded and deterministic (`none`, `exists`, byte equality
 
 ## Deployment
 
-Fresh deployment publishes in dependency order: common queue, Industry Actions, Logistics Actions, Infrastructure Actions, then Automation. Their call-package, stable type-origin, and registry IDs are recorded in schema-v3 `deployments/<network>/npc-deployment.json`, synchronized into EveJS, and exposed to Smart Assembly Control. Older schema versions retain compatibility fallbacks but do not select the dedicated group-3 through group-5 packages.
+Fresh deployment publishes in dependency order: common queue, Industry Actions, Logistics Actions, Infrastructure Actions, then Automation. Their call-package, stable type-origin, and registry IDs are recorded as independent capabilities in `deployments/<network>/world-features.v1.json`, synchronized into EveJS, and exposed to Smart Assembly Control. Historical flat schemas retain compatibility fallbacks during migration but do not select the dedicated group-3 through group-5 packages.
 
 Package-local Move tests cover creation, typed validation, claims, settlement/receipts, and keeper progression. Run them with the Sui CLI in the efctl environment; see [Package topology and deployment identity](package-topology.md) for focused commands.
