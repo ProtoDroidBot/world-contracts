@@ -31,6 +31,25 @@ fun setup_character_for_receipt_tests(ts: &mut ts::Scenario) {
     };
 }
 
+#[test]
+fun faction_gas_does_not_grant_broad_admin_acl_access() {
+    let mut scenario = ts::begin(governor());
+    test_helpers::setup_world(&mut scenario);
+    ts::next_tx(&mut scenario, admin());
+    {
+        let acl = ts::take_shared<AdminACL>(&scenario);
+        let faction = @0xE;
+        let stranger = @0xF;
+        assert_eq!(access::authorized_participant_for_testing(&acl, admin(), faction, true), true);
+        assert_eq!(access::authorized_participant_for_testing(&acl, stranger, admin(), true), true);
+        assert_eq!(access::authorized_participant_for_testing(&acl, faction, faction, true), false);
+        assert_eq!(access::authorized_participant_for_testing(&acl, stranger, faction, true), false);
+        assert_eq!(access::authorized_participant_for_testing(&acl, admin(), faction, false), true);
+        ts::return_shared(acl);
+    };
+    ts::end(scenario);
+}
+
 /// Tests creating, transferring, and deleting an owner cap
 /// Scenario: Admin creates an owner cap, transfers it to a user, then deletes it
 /// Expected: Owner cap is created, transferred successfully, and can be deleted by admin

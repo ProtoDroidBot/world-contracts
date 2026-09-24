@@ -161,16 +161,30 @@ public fun server_address_registry_id(registry: &ServerAddressRegistry): ID {
     object::id(registry)
 }
 
-/// Verifies that the transaction is from an authorized address.
-/// Checks the sponsor if the transaction is sponsored, otherwise falls back to the sender.
+/// Verifies that an authorized server address signed the transaction.
+/// A distinct gas sponsor may pay for an authorized sender (for example an NPC
+/// faction paying for its server-authored Industry mirror). The gas sponsor
+/// alone may also authorize the existing player-sponsored flow. This does not
+/// add the gas sponsor to the ACL or grant it authority in later transactions.
 public fun verify_sponsor(admin_acl: &AdminACL, ctx: &TxContext) {
     let sponsor_opt = tx_context::sponsor(ctx);
-    let authorized_address = if (option::is_some(&sponsor_opt)) {
+    let has_sponsor = option::is_some(&sponsor_opt);
+    let sponsor = if (has_sponsor) {
         *option::borrow(&sponsor_opt)
     } else {
-        ctx.sender()
+        @0x0
     };
-    assert!(admin_acl.authorized_sponsors.contains(authorized_address), EUnauthorizedSponsor);
+    assert!(authorized_participant(admin_acl, ctx.sender(), sponsor, has_sponsor), EUnauthorizedSponsor);
+}
+
+fun authorized_participant(admin_acl: &AdminACL, sender: address, sponsor: address, has_sponsor: bool): bool {
+    admin_acl.authorized_sponsors.contains(sender)
+        || (has_sponsor && admin_acl.authorized_sponsors.contains(sponsor))
+}
+
+#[test_only]
+public fun authorized_participant_for_testing(admin_acl: &AdminACL, sender: address, sponsor: address, has_sponsor: bool): bool {
+    authorized_participant(admin_acl, sender, sponsor, has_sponsor)
 }
 
 // === Package Functions ===
