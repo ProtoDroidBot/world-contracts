@@ -1,6 +1,7 @@
 import "dotenv/config";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 import { Transaction } from "@mysten/sui/transactions";
-import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import type { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { getConfig, MODULES } from "../utils/config";
 import { getConnectedAssemblies, getAssemblyTypes } from "./helper";
@@ -38,7 +39,7 @@ function getOrphanedOfflineCall(kind: string): { module: string; functionName: s
 async function unanchor(
     networkNodeId: string,
     adminAcl: string,
-    client: SuiJsonRpcClient,
+    client: SuiGrpcClient,
     keypair: Ed25519Keypair,
     config: ReturnType<typeof getConfig>
 ) {
@@ -79,11 +80,7 @@ async function unanchor(
         arguments: [tx.object(networkNodeId), currentHotPotato, tx.object(adminAcl)],
     });
 
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer: keypair,
-        options: { showObjectChanges: true, showEffects: true },
-    });
+    const result = await executeGrpcTransaction(client, tx, keypair);
 
     console.log("Transaction digest:", result.digest);
     return result;

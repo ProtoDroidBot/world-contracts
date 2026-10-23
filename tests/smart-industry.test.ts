@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { SuiClientTypes } from "@mysten/sui/client";
+import { normalizeStructTag } from "@mysten/sui/utils";
 import {
     buildIndustryTransaction,
     deriveIndustryId,
@@ -44,6 +46,40 @@ const previous: IndustryState = {
     lanes: [{ lane_id: "1", snapshot: empty, production: null }],
     laneStatesMirrored: false,
 };
+
+type ReadObject = Pick<SuiClientTypes.Object<{ json: true }>, "json" | "owner" | "type">;
+
+function industryObject(json: Record<string, unknown> = {}): ReadObject {
+    return {
+        owner: { $kind: "Shared", Shared: { initialSharedVersion: "1" } },
+        type: `${objectId(world.packageId)}::smart_industry::SmartIndustry`,
+        json: {
+            assembly_id: assemblyId, revision: "3", observed_at_ms: "1000",
+            synced_at_ms: "1001", assembly_status: 1, snapshot: empty, ...json,
+        },
+    };
+}
+
+function nativeReader(objects: Map<string, ReadObject | Error>) {
+    return {
+        getObject: async ({ objectId, include }: { objectId: string; include: unknown }) => {
+            assert.deepEqual(include, { json: true });
+            const object = objects.get(objectId);
+            if (!object) throw new Error(`Object ${objectId} not found`);
+            if (object instanceof Error) throw object;
+            return { object: { ...object, type: normalizeStructTag(object.type) } };
+        },
+        ledgerService: {
+            getObject: async ({ objectId, readMask }: { objectId: string; readMask: unknown }) => {
+                assert.deepEqual(readMask, { paths: ["object_id"] });
+                const object = objects.get(objectId);
+                if (!object) throw Object.assign(new Error("Object not found"), { code: "NOT_FOUND" });
+                if (object instanceof Error) throw object;
+                return { response: { object: { objectId } } };
+            },
+        },
+    } as unknown as Parameters<typeof readIndustry>[0];
+}
 
 test("snapshot keeps exact u64 values, canonical ordering and empty replacement", () => {
     const parsed = parseIndustrySnapshot({
@@ -124,38 +160,37 @@ test("PTBs call constructors then atomic create or revision-checked sync", () =>
 });
 
 test("read reports absence but propagates transport/type/parent failures", async () => {
-    const client = (value: any) => ({ getObject: async ({ id }: any) =>
-        [deriveProductionFieldId(previous.objectId), deriveLaneProductionFieldId(previous.objectId),
-            deriveLaneStateFieldId(previous.objectId)].includes(id)
-        ? { error: { code: "notExists" } } : value });
-    assert.equal(
-        await readIndustry(client({ error: { code: "notExists" } }), world, assemblyId),
-        null
-    );
-    await assert.rejects(
-        readIndustry(client({ error: { code: "deleted" } }), world, assemblyId),
-        /deleted/
-    );
-    const value = {
-        data: {
-            owner: { Shared: { initial_shared_version: "1" } },
-            content: {
-                dataType: "moveObject",
-                type: `${objectId(world.packageId)}::smart_industry::SmartIndustry`,
-                fields: {
-                    assembly_id: assemblyId,
-                    revision: "3",
-                    observed_at_ms: "1000",
-                    synced_at_ms: "1001",
-                    assembly_status: 1,
-                    snapshot: { fields: empty },
-                },
-            },
-        },
-    };
-    assert.deepEqual(await readIndustry(client(value), world, assemblyId), previous);
-    value.data.content.fields.assembly_id = objectId("0x999");
-    await assert.rejects(readIndustry(client(value), world, assemblyId), /parent mismatch/);
+    const objects = new Map<string, ReadObject | Error>();
+    const client = nativeReader(objects);
+    assert.equal(await readIndustry(client, world, assemblyId), null);
+    for (const error of [new Error("Unexpected status code: 404"),
+        Object.assign(new Error("Node unavailable"), { code: "UNAVAILABLE" })]) {
+        objects.set(previous.objectId, error);
+        await assert.rejects(readIndustry(client, world, assemblyId), (actual) => actual === error);
+    }
+    const value = industryObject();
+    objects.set(previous.objectId, value);
+    assert.deepEqual(await readIndustry(client, world, assemblyId), previous);
+    value.type = "0x2::other::Object";
+    await assert.rejects(readIndustry(client, world, assemblyId), /object type/);
+    value.type = industryObject().type;
+    value.json!.assembly_id = objectId("0x999");
+    await assert.rejects(readIndustry(client, world, assemblyId), /parent mismatch/);
+});
+
+test("optional gRPC reads require NOT_FOUND confirmation and preserve original errors", async () => {
+    const client = nativeReader(new Map([[previous.objectId, industryObject()]]));
+    const original = new Error("Malformed object response");
+    client.getObject = async () => { throw original; };
+    await assert.rejects(readIndustry(client, world, assemblyId), (error) => error === original);
+    client.getObject = async () => ({ object: undefined }) as any;
+    await assert.rejects(readIndustry(client, world, assemblyId), /Missing object response/);
+    const unavailable = new Error("Sidecar request failed");
+    const objects = new Map<string, ReadObject | Error>([
+        [previous.objectId, industryObject()],
+        [deriveLaneStateFieldId(previous.objectId), unavailable],
+    ]);
+    await assert.rejects(readIndustry(nativeReader(objects), world, assemblyId), (error) => error === unavailable);
 });
 
 test("upgrades preserve type-origin IDs while using the latest function target", () => {
@@ -251,26 +286,54 @@ test("lane-aware PTBs keep distinct blueprints and escrow in the same revision",
 test("production reads require the sidecar owner and matching inventory revision", async () => {
     const production = { job_id: "7", state: 2, requested_runs: "3", completed_runs: "1",
         run_started_at_ms: "1000", run_end_at_ms: "13000", stop_reason: "" };
-    const record = { revision: "3", production: { fields: production } };
-    const owner = { ObjectOwner: previous.objectId };
-    const client = { getObject: async ({ id }: any) => id === deriveLaneStateFieldId(previous.objectId)
-        ? { error: { code: "notExists" } } : id === deriveLaneProductionFieldId(previous.objectId)
-        ? { error: { code: "notExists" } } : id === deriveProductionFieldId(previous.objectId) ? {
-        data: { owner, content: { dataType: "moveObject", type: `0x2::dynamic_field::Field<u8, ${objectId("0x555")}::smart_industry::ProductionRecord>`,
-            fields: { name: 0, value: { fields: record } } } },
-    } : { data: { owner: { Shared: { initial_shared_version: "1" } }, content: {
-        dataType: "moveObject", type: `${objectId(world.packageId)}::smart_industry::SmartIndustry`, fields: {
-            assembly_id: assemblyId, revision: "3", observed_at_ms: "1000", synced_at_ms: "1001", assembly_status: 2,
-            snapshot: { fields: { ...empty, blueprint_id: "1007", run_time: "12" } },
-        },
-    } } } };
-    const result = await readIndustry(client as any, world, assemblyId);
+    const record = { revision: "3", production };
+    const owner = { $kind: "ObjectOwner" as const, ObjectOwner: previous.objectId };
+    const client = nativeReader(new Map([
+        [deriveProductionFieldId(previous.objectId), {
+            owner, type: `0x2::dynamic_field::Field<u8, ${objectId("0x555")}::smart_industry::ProductionRecord>`,
+            json: { name: 0, value: record },
+        }],
+        [previous.objectId, industryObject({ assembly_status: 2,
+            snapshot: { ...empty, blueprint_id: "1007", run_time: "12" } })],
+    ]));
+    const result = await readIndustry(client, world, assemblyId);
     assert.equal(result?.productionMirrored, true);
     assert.equal(result?.production?.state, "DISCONTINUING");
     record.revision = "4";
-    await assert.rejects(readIndustry(client as any, world, assemblyId), /revision changed/);
-    assert.equal((await readIndustry(client as any, world, assemblyId, true))?.productionMirrored, false);
+    await assert.rejects(readIndustry(client, world, assemblyId), /revision changed/);
+    assert.equal((await readIndustry(client, world, assemblyId, true))?.productionMirrored, false);
     record.revision = "3";
     owner.ObjectOwner = objectId("0xdead");
-    await assert.rejects(readIndustry(client as any, world, assemblyId), /production field/);
+    await assert.rejects(readIndustry(client, world, assemblyId), /production field/);
+});
+
+test("native gRPC lane records preserve current and legacy production projections", async () => {
+    const idle = { job_id: "0", state: 0, requested_runs: "0", completed_runs: "0",
+        run_started_at_ms: "0", run_end_at_ms: "0", stop_reason: "" };
+    const record = { revision: "3", lanes: [{ lane_id: "1", snapshot: empty, production: idle }] };
+    const field: ReadObject = {
+        owner: { $kind: "ObjectOwner", ObjectOwner: previous.objectId },
+        type: `0x2::dynamic_field::Field<u8, ${objectId("0x555")}::smart_industry::LaneStateRecord>`,
+        json: { name: 2, value: record },
+    };
+    const objects = new Map([
+        [previous.objectId, industryObject()],
+        [deriveLaneStateFieldId(previous.objectId), field],
+    ]);
+    const client = nativeReader(objects);
+    const current = await readIndustry(client, world, assemblyId);
+    assert.equal(current?.laneStatesMirrored, true);
+    assert.deepEqual(current?.lanes, previous.lanes);
+    record.revision = "4";
+    await assert.rejects(readIndustry(client, world, assemblyId), /Lane state revision changed/);
+    assert.equal((await readIndustry(client, world, assemblyId, true))?.laneStatesMirrored, false);
+    record.revision = "3";
+    objects.delete(deriveLaneStateFieldId(previous.objectId));
+    field.type = field.type.replace("LaneStateRecord", "LaneProductionRecord");
+    field.json!.name = 1;
+    objects.set(deriveLaneProductionFieldId(previous.objectId), field);
+    const legacy = await readIndustry(client, world, assemblyId);
+    assert.equal(legacy?.productionsMirrored, true);
+    assert.equal(legacy?.laneStatesMirrored, false);
+    assert.deepEqual(legacy?.productions, previous.productions);
 });

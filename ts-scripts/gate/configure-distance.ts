@@ -5,17 +5,18 @@ import {
     getEnvConfig,
     handleError,
     hydrateWorldConfig,
-    initializeContext,
+    initializeGrpcContext,
     parseBigIntArray,
 } from "../utils/helper";
 import { delay } from "../utils/delay";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 
 async function setGateMaxDistanceByType(
     gateConfigId: string,
     adminAcl: string,
     typeId: bigint,
     maxDistance: bigint,
-    ctx: ReturnType<typeof initializeContext>
+    ctx: ReturnType<typeof initializeGrpcContext>
 ) {
     const { client, keypair, config } = ctx;
 
@@ -30,11 +31,7 @@ async function setGateMaxDistanceByType(
         ],
     });
 
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer: keypair,
-        options: { showEffects: true, showObjectChanges: true },
-    });
+    const result = await executeGrpcTransaction(client, tx, keypair);
 
     console.log("\nGate max distance updated!");
     console.log("Transaction digest:", result.digest);
@@ -46,7 +43,7 @@ async function main() {
 
     try {
         const env = getEnvConfig();
-        const ctx = initializeContext(env.network, env.adminExportedKey);
+        const ctx = initializeGrpcContext(env.network, env.adminExportedKey);
         const config = await hydrateWorldConfig(ctx);
         const { client } = ctx;
 

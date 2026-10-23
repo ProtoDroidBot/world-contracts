@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import type { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
-import { createClient, keypairFromPrivateKey } from "./client";
+import { createClient, createGrpcClient, keypairFromPrivateKey } from "./client";
 import {
     HydratedWorldConfig,
     WorldConfig,
@@ -13,6 +13,7 @@ import {
 } from "./config";
 import { TENANT } from "./constants";
 import { getExtractedObjectIdsPath } from "./world-object-ids";
+import { decodeWorldEvent } from "./events";
 export interface EnvConfig {
     network: Network;
     rpcUrl: string;
@@ -21,8 +22,8 @@ export interface EnvConfig {
     tenant: string;
 }
 
-export interface InitializedContext {
-    client: SuiJsonRpcClient;
+export interface InitializedContext<Client = SuiGrpcClient> {
+    client: Client;
     keypair: Ed25519Keypair;
     config: WorldConfig;
     address: string;
@@ -115,7 +116,21 @@ export function getEnvConfig(): EnvConfig {
 }
 
 export function initializeContext(network: Network, privateKey: string): InitializedContext {
-    const client = createClient(network);
+    return initializeContextWithClient(network, privateKey, createClient(network));
+}
+
+export function initializeGrpcContext(
+    network: Network,
+    privateKey: string
+): InitializedContext<SuiGrpcClient> {
+    return initializeContextWithClient(network, privateKey, createGrpcClient(network));
+}
+
+function initializeContextWithClient<Client>(
+    network: Network,
+    privateKey: string,
+    client: Client
+): InitializedContext<Client> {
     const keypair = keypairFromPrivateKey(privateKey);
     const config = getConfig(network) as WorldConfig;
     const fromExtracted = getDefaultWorldPackageId(network);
@@ -126,15 +141,17 @@ export function initializeContext(network: Network, privateKey: string): Initial
 }
 
 export function extractEvent<T = unknown>(
-    result: { events?: Array<{ type: string; parsedJson?: unknown }> | null | undefined },
+    result: { events?: Array<{ eventType: string; bcs: Uint8Array }> | null | undefined },
     eventTypeSuffix: string
 ): T | null {
     const events = result.events || [];
-    const event = events.find((event) => event.type.endsWith(eventTypeSuffix));
-    return (event?.parsedJson as T) || null;
+    const event = events.find((event) => event.eventType.endsWith(eventTypeSuffix));
+    return event ? (decodeWorldEvent(event.eventType, event.bcs) as T) : null;
 }
 
-export async function hydrateWorldConfig(ctx: InitializedContext): Promise<HydratedWorldConfig> {
+export async function hydrateWorldConfig(
+    ctx: Pick<InitializedContext, "config">
+): Promise<HydratedWorldConfig> {
     const hasManualIds =
         !!ctx.config.governorCap &&
         !!ctx.config.serverAddressRegistry &&

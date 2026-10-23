@@ -1,6 +1,7 @@
 import "dotenv/config";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 import { Transaction } from "@mysten/sui/transactions";
-import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import type { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { getConfig, MODULES } from "../utils/config";
 import { deriveObjectId } from "../utils/derive-object-id";
@@ -18,7 +19,7 @@ export async function online(
     networkObjectId: string,
     assemblyId: string,
     ownerCapId: string,
-    client: SuiJsonRpcClient,
+    client: SuiGrpcClient,
     keypair: Ed25519Keypair,
     config: ReturnType<typeof getConfig>
 ) {
@@ -48,11 +49,7 @@ export async function online(
         arguments: [tx.object(characterId), ownerCap, receipt],
     });
 
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer: keypair,
-        options: { showObjectChanges: true, showEffects: true },
-    });
+    const result = await executeGrpcTransaction(client, tx, keypair);
 
     console.log("\n Storage Unit brought online successfully!");
     console.log("Transaction digest:", result.digest);

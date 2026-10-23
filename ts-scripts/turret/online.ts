@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 import { Transaction } from "@mysten/sui/transactions";
 import { HydratedWorldConfig, MODULES } from "../utils/config";
 import { GAME_CHARACTER_ID, NWN_ITEM_ID, TURRET_ITEM_ID } from "../utils/constants";
@@ -46,11 +47,7 @@ async function onlineTurret(
         arguments: [tx.object(characterId), ownerCap, receipt],
     });
 
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer: keypair,
-        options: { showEffects: true, showObjectChanges: true },
-    });
+    const result = await executeGrpcTransaction(client, tx, keypair);
     console.log("Turret brought online. Digest:", result.digest);
     return result;
 }

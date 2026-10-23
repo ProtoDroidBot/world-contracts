@@ -1,10 +1,11 @@
 import "dotenv/config";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 import { Transaction } from "@mysten/sui/transactions";
 import { bcs } from "@mysten/sui/bcs";
-import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import type { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { getConfig, MODULES } from "../utils/config";
-import { hexToBytes } from "../utils/helper";
+import { extractEvent, hexToBytes } from "../utils/helper";
 import { hydrateWorldConfig, initializeContext, handleError, getEnvConfig } from "../utils/helper";
 import {
     LOCATION_HASH,
@@ -23,7 +24,7 @@ async function createStorageUnit(
     typeId: bigint,
     itemId: bigint,
     adminAcl: string,
-    client: SuiJsonRpcClient,
+    client: SuiGrpcClient,
     keypair: Ed25519Keypair,
     config: ReturnType<typeof getConfig>
 ) {
@@ -48,27 +49,23 @@ async function createStorageUnit(
         arguments: [storageUnit, tx.object(adminAcl)],
     });
 
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer: keypair,
-        options: { showEvents: true },
-    });
+    const result = await executeGrpcTransaction(client, tx, keypair, { events: true });
 
     console.log("Transaction digest:", result.digest);
 
-    const storageUnitEvent = result.events?.find((event) =>
-        event.type.endsWith("::storage_unit::StorageUnitCreatedEvent")
+    const storageUnitEvent = extractEvent<{ storage_unit_id: string; owner_cap_id: string }>(
+        result,
+        "::storage_unit::StorageUnitCreatedEvent"
     );
 
-    if (!storageUnitEvent?.parsedJson) {
+    if (!storageUnitEvent) {
         throw new Error("StorageUnitCreatedEvent not found in transaction result");
     }
 
-    const storageUnitId = (storageUnitEvent.parsedJson as { storage_unit_id: string })
-        .storage_unit_id;
+    const storageUnitId = storageUnitEvent.storage_unit_id;
     console.log("Storage Unit Object Id: ", storageUnitId);
 
-    const ownerCapObjectId = (storageUnitEvent.parsedJson as { owner_cap_id: string }).owner_cap_id;
+    const ownerCapObjectId = storageUnitEvent.owner_cap_id;
     console.log("OwnerCap Object Id: ", ownerCapObjectId);
 }
 

@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 import { Transaction } from "@mysten/sui/transactions";
 import { bcs } from "@mysten/sui/bcs";
 import { HydratedWorldConfig, MODULES } from "../utils/config";
@@ -49,11 +50,7 @@ async function createAssembly(
         arguments: [assembly, tx.object(adminAcl)],
     });
 
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer: keypair,
-        options: { showEvents: true },
-    });
+    const result = await executeGrpcTransaction(client, tx, keypair, { events: true });
 
     const assemblyEvent = extractEvent<{ assembly_id: string; owner_cap_id: string }>(
         result,

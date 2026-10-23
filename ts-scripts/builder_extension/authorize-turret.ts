@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 import { Transaction } from "@mysten/sui/transactions";
 import { MODULES } from "../utils/config";
 import { deriveObjectId } from "../utils/derive-object-id";
@@ -52,11 +53,7 @@ async function authorizeExtension(
         arguments: [tx.object(characterId), ownerCap, receipt],
     });
 
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer: keypair,
-        options: { showEffects: true, showObjectChanges: true, showEvents: true },
-    });
+    const result = await executeGrpcTransaction(client, tx, keypair, { events: true });
     console.log("Extension authorized. Auth type:", authType);
     console.log("Transaction digest:", result.digest);
     return result;

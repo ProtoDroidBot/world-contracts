@@ -1,47 +1,54 @@
 import { Transaction } from "@mysten/sui/transactions";
-import { SuiJsonRpcClient, ExecuteTransactionBlockParams } from "@mysten/sui/jsonRpc";
+import type { SuiGrpcClient } from "@mysten/sui/grpc";
+import type { SuiClientTypes } from "@mysten/sui/client";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
+import { requireSuccessfulTransaction } from "./grpc-transaction";
 
-export async function executeSponsoredTransaction(
+export async function executeSponsoredTransaction<
+    Include extends SuiClientTypes.TransactionInclude = { events: true },
+>(
     tx: Transaction,
-    client: SuiJsonRpcClient,
+    client: SuiGrpcClient,
     playerKeypair: Ed25519Keypair,
     adminKeypair: Ed25519Keypair,
     playerAddress: string,
     adminAddress: string,
-    options?: ExecuteTransactionBlockParams["options"]
+    include?: Include
 ) {
-    const transactionKindBytes = await tx.build({ client, onlyTransactionKind: true });
-    const gasCoins = await client.getCoins({
+    // Resolve the complete sponsored transaction with the real sender and gas
+    // owner. gRPC's resolver simulates these identities when selecting gas.
+    tx.setSender(playerAddress);
+    tx.setGasOwner(adminAddress);
+    const gasCoins = await client.listCoins({
         owner: adminAddress,
         coinType: "0x2::sui::SUI",
         limit: 1,
     });
 
-    if (gasCoins.data.length === 0) {
+    if (gasCoins.objects.length === 0) {
         throw new Error("Admin has no gas coins to sponsor the transaction");
     }
 
-    const gasPayment = gasCoins.data.map((coin) => ({
-        objectId: coin.coinObjectId,
+    const gasPayment = gasCoins.objects.map((coin) => ({
+        objectId: coin.objectId,
         version: coin.version,
         digest: coin.digest,
     }));
 
-    // Reconstruct transaction with gas payment
-    const sponsoredTx = Transaction.fromKind(transactionKindBytes);
-    sponsoredTx.setSender(playerAddress);
-    sponsoredTx.setGasOwner(adminAddress);
-    sponsoredTx.setGasPayment(gasPayment);
-    const transactionBytes = await sponsoredTx.build({ client });
+    tx.setGasPayment(gasPayment);
+    const transactionBytes = await tx.build({ client });
 
     const playerSignature = await playerKeypair.signTransaction(transactionBytes);
     const adminSignature = await adminKeypair.signTransaction(transactionBytes);
 
     // Execute with both signatures
-    return await client.executeTransactionBlock({
-        transactionBlock: transactionBytes,
-        signature: [playerSignature.signature, adminSignature.signature],
-        options: options || { showObjectChanges: true, showEffects: true, showEvents: true },
-    });
+    return requireSuccessfulTransaction(
+        await client.executeTransaction({
+            transaction: transactionBytes,
+            signatures: [playerSignature.signature, adminSignature.signature],
+            include: { ...(include ?? { events: true }), effects: true } as Include & {
+                effects: true;
+            },
+        })
+    );
 }

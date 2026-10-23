@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import { createClient, keypairFromPrivateKey } from "../utils/client";
 import { loadExtractedObjectIds } from "../utils/helper";
 import { DEFAULT_RPC_URLS, type Network } from "../utils/config";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 import {
     buildIndustryTransaction,
     deriveIndustryId,
@@ -122,15 +123,7 @@ async function main() {
     }
     const privateKey = process.env.ADMIN_PRIVATE_KEY;
     if (!privateKey) throw new Error("ADMIN_PRIVATE_KEY is required to execute a sync");
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer: keypairFromPrivateKey(privateKey),
-        options: { showEffects: true, showEvents: true },
-    });
-    if (result.effects?.status.status !== "success")
-        throw new Error(
-            `Smart Industry sync failed: ${result.effects?.status.error ?? "missing execution effects"}`
-        );
+    const result = await executeGrpcTransaction(client, tx, keypairFromPrivateKey(privateKey));
     await client.waitForTransaction({ digest: result.digest });
     console.log(
         JSON.stringify(

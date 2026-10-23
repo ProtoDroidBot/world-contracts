@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 import { Transaction } from "@mysten/sui/transactions";
 import { getEnvConfig, handleError, hydrateWorldConfig, initializeContext } from "../utils/helper";
 import { resolveBuilderGateExtensionIds } from "../utils/builder-extension";
@@ -33,11 +34,7 @@ async function main() {
             ],
         });
 
-        const result = await client.signAndExecuteTransaction({
-            transaction: tx,
-            signer: keypair,
-            options: { showEffects: true, showObjectChanges: true },
-        });
+        const result = await executeGrpcTransaction(client, tx, keypair);
 
         console.log("\nBuilder extension gate config updated!");
         console.log("Transaction digest:", result.digest);

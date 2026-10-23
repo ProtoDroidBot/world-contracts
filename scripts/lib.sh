@@ -8,7 +8,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 setup() {
     cd "$REPO_ROOT"
-    [ -f .env ] && set -a && source .env && set +a
+    if [ -f .env ]; then
+        # Windows-edited files may be mounted read-only. Normalize the input
+        # stream, preserving the original file and its credentials.
+        set -a
+        source <(sed 's/\r$//' .env)
+        set +a
+    fi
 }
 
 get_env() {

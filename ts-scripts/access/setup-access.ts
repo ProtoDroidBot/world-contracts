@@ -2,7 +2,13 @@ import "dotenv/config";
 import { Transaction } from "@mysten/sui/transactions";
 import { MODULES, Network } from "../utils/config";
 import { delay } from "../utils/delay";
-import { handleError, hydrateWorldConfig, initializeContext, requireEnv } from "../utils/helper";
+import {
+    handleError,
+    hydrateWorldConfig,
+    initializeGrpcContext,
+    requireEnv,
+} from "../utils/helper";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 
 function getSponsorAddresses(raw: string): string[] {
     return raw
@@ -23,7 +29,7 @@ function getAccessSetupEnv() {
 
 async function setupAccess() {
     const { network, governorKey, adminAddress, sponsorAddresses } = getAccessSetupEnv();
-    const ctx = initializeContext(network, governorKey);
+    const ctx = initializeGrpcContext(network, governorKey);
     const { client, keypair } = ctx;
     const config = await hydrateWorldConfig(ctx);
 
@@ -52,15 +58,8 @@ async function setupAccess() {
             tx1.pure.address(adminAddress),
         ],
     });
-    const r1 = await client.signAndExecuteTransaction({
-        signer: keypair,
-        transaction: tx1,
-        options: { showObjectChanges: true },
-    });
+    const r1 = await executeGrpcTransaction(client, tx1, keypair);
     console.log("   Digest:", r1.digest);
-    if (r1.effects?.status?.status === "failure") {
-        throw new Error(`register_server_address failed: ${JSON.stringify(r1.effects.status)}`);
-    }
     await delay(5000);
 
     console.log(`2. add_sponsor_to_acl (${sponsorAddresses.length} sponsors, atomic)...`);
@@ -75,15 +74,8 @@ async function setupAccess() {
             ],
         });
     }
-    const r2 = await client.signAndExecuteTransaction({
-        signer: keypair,
-        transaction: tx2,
-        options: { showObjectChanges: true },
-    });
+    const r2 = await executeGrpcTransaction(client, tx2, keypair);
     console.log("   Digest:", r2.digest);
-    if (r2.effects?.status?.status === "failure") {
-        throw new Error(`add_sponsor_to_acl failed: ${JSON.stringify(r2.effects.status)}`);
-    }
 
     console.log("\n==== Access setup complete ====");
 }

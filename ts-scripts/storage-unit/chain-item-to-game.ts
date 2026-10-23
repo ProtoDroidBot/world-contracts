@@ -1,7 +1,8 @@
 import "dotenv/config";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 import { Transaction } from "@mysten/sui/transactions";
 import { bcs } from "@mysten/sui/bcs";
-import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import type { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { getConfig, MODULES } from "../utils/config";
 import { hexToBytes } from "../utils/helper";
@@ -31,7 +32,7 @@ async function chainItemToGame(
     typeId: bigint,
     quantity: number,
     proofHex: string,
-    client: SuiJsonRpcClient,
+    client: SuiGrpcClient,
     playerKeypair: Ed25519Keypair,
     config: ReturnType<typeof getConfig>
 ) {
@@ -65,15 +66,11 @@ async function chainItemToGame(
         arguments: [tx.object(characterId), ownerCap, receipt],
     });
 
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer: playerKeypair,
-        options: { showEvents: true },
-    });
+    const result = await executeGrpcTransaction(client, tx, playerKeypair, { events: true });
     console.log("Transaction digest:", result.digest);
 
     const burnedEvent = result.events?.find((event) =>
-        event.type.endsWith("::inventory::ItemBurnedEvent")
+        event.eventType.endsWith("::inventory::ItemBurnedEvent")
     );
 
     console.log("burnedEvent:", burnedEvent);

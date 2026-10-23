@@ -1,11 +1,16 @@
-import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { decodeSuiPrivateKey } from "@mysten/sui/cryptography";
 import { getConfig, Network } from "./config";
 
-export function createClient(network: Network = "localnet"): SuiJsonRpcClient {
+export function createClient(network: Network = "localnet"): SuiGrpcClient {
     const config = getConfig(network);
-    return new SuiJsonRpcClient({ url: config.url, network });
+    return new SuiGrpcClient({ baseUrl: config.url, network });
+}
+
+/** Explicit alias retained for configuration callers. All scripts use gRPC. */
+export function createGrpcClient(network: Network = "localnet"): SuiGrpcClient {
+    return createClient(network);
 }
 
 export function keypairFromPrivateKey(privateKey: string): Ed25519Keypair {

@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 import { Transaction } from "@mysten/sui/transactions";
 import { MODULES } from "../utils/config";
 import {
@@ -44,11 +45,7 @@ async function online(
         arguments: [tx.object(characterId), ownerCap, receipt],
     });
 
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer: keypair,
-        options: { showObjectChanges: true, showEffects: true },
-    });
+    const result = await executeGrpcTransaction(client, tx, keypair);
 
     console.log("\n Network Node brought online successfully!");
     console.log("Transaction digest:", result.digest);

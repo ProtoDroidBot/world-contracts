@@ -62,20 +62,19 @@ sui start --network.config /data/sui-localnet --with-faucet &
 NODE_PID=$!
 trap 'kill "$NODE_PID" 2>/dev/null || true' EXIT
 
-echo "[ci] Waiting for RPC on port 9000..."
+echo "[ci] Waiting for Sui on port 9000..."
 for i in $(seq 1 30); do
-  curl -sf -X POST http://127.0.0.1:9000 \
-    -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","method":"rpc.discover","id":1}' > /dev/null 2>&1 && break
+  timeout 5 sui client --client.config "$CLIENT_YAML" --client.env localnet \
+    chain-identifier --format hex > /dev/null 2>&1 && break
   if [ "$i" -eq 30 ]; then
-    echo "[ci] ERROR: RPC did not become ready" >&2
+    echo "[ci] ERROR: Sui did not become ready" >&2
     kill "$NODE_PID" 2>/dev/null || true
     exit 1
   fi
   sleep 1
 done
 sleep 2
-echo "[ci] RPC ready."
+echo "[ci] Sui ready."
 
 # ---------- fund accounts ----------
 printf 'y\n' | sui client switch --env localnet 2>/dev/null || true

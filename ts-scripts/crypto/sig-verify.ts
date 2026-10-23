@@ -64,18 +64,21 @@ async function main() {
             ],
         });
 
-        const result = await client.devInspectTransactionBlock({
-            transactionBlock: tx,
-            sender: address,
+        tx.setSender(address);
+        const result = await client.simulateTransaction({
+            transaction: tx,
+            include: { commandResults: true },
         });
+        const simulated =
+            result.$kind === "Transaction" ? result.Transaction : result.FailedTransaction;
 
         console.log("====Verification result======");
 
-        if (result.effects.status.status === "success") {
-            const returnValues = result.results?.[0]?.returnValues;
+        if (simulated.status.success) {
+            const returnValues = result.commandResults?.[0]?.returnValues;
 
             if (returnValues && returnValues.length > 0) {
-                const verificationResult = returnValues[0][0][0];
+                const verificationResult = returnValues[0].bcs[0];
 
                 if (verificationResult === 1) {
                     console.log("Signature is VALID");
@@ -87,7 +90,7 @@ async function main() {
             }
         } else {
             console.log("Transaction Failed");
-            console.log("Error:", result.effects.status.error);
+            console.log("Error:", simulated.status.error.message);
         }
     } catch (error) {
         console.log("Error during verification:", error);

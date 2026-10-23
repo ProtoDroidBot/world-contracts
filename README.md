@@ -26,6 +26,11 @@ If you are looking for the current contracts used in game they can be found here
    cp env.example .env
    ```
 
+   New-world generation writes LF line endings. The deploy scripts and Docker
+   entrypoint also accept Windows CRLF `.env` files, including read-only mounts,
+   by normalizing line endings while loading them. Each submodule's
+   `.gitattributes` keeps its shell scripts and environment templates in LF format.
+
 2. **Get your private key:**
    ```bash
    # If you have an existing Sui wallet:
@@ -86,6 +91,20 @@ outputs, publishes the base world plus five first-party feature packages, and
 writes a combined feature manifest. It is not an upgrade command. See
 [Package topology and deployment identity](docs/package-topology.md) before
 operating on an existing deployment.
+
+After publishing, run `pnpm configure-world` to configure access, fuel/energy,
+and gate distances. All TypeScript deployment, seeding, and integration scripts use Sui gRPC at `SUI_RPC_URL`
+(default `http://127.0.0.1:9000` for localnet), matching the current Sui CLI.
+Older versions using JSON-RPC can receive HTTP 404 from that same fullnode even
+when CLI publication succeeds. If configuration failed this way, rerun
+`pnpm configure-world` after updating; the existing deployment can be reused.
+Sponsored transactions use native coin queries and submit both signatures over
+the same transaction bytes. View calls use gRPC simulation, and world events are
+decoded from their Move BCS layouts. Docker readiness checks query the chain
+through the Sui CLI instead of `rpc.discover`.
+Run `node --import tsx --test tests/*.test.ts tests/*.test.mjs`
+for the script regression suite, including transport, sponsorship, event decoding,
+simulation, and object-query response handling.
 
 ## Package topology
 

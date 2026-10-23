@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import { getOwnedJumpPermitId } from "./jump-permit";
 import { Transaction } from "@mysten/sui/transactions";
 import { MODULES } from "../utils/config";
 import { deriveObjectId } from "../utils/derive-object-id";
@@ -19,21 +19,6 @@ import {
 } from "../utils/helper";
 import { keypairFromPrivateKey } from "../utils/client";
 import { executeSponsoredTransaction } from "../utils/transaction";
-
-async function getOwnedJumpPermitId(
-    client: SuiJsonRpcClient,
-    owner: string,
-    worldPackageId: string
-): Promise<string | null> {
-    const type = `${worldPackageId}::${MODULES.GATE}::JumpPermit`;
-    const res = await client.getOwnedObjects({
-        owner,
-        filter: { StructType: type },
-        limit: 1,
-    });
-    const first = res.data?.[0]?.data;
-    return first?.objectId ?? null;
-}
 
 async function jumpWithPermit(
     ctx: ReturnType<typeof initializeContext>,

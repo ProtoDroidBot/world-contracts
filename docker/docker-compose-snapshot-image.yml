@@ -35,7 +35,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/rpc.discover > /dev/null"]
+      test: ["CMD-SHELL", "timeout 4 sui client --client.env localnet chain-identifier --format hex > /dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 5

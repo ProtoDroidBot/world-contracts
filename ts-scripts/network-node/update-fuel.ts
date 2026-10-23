@@ -1,6 +1,7 @@
 import "dotenv/config";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 import { Transaction } from "@mysten/sui/transactions";
-import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import type { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { getConfig, MODULES } from "../utils/config";
 import {
@@ -33,7 +34,7 @@ import { hydrateWorldConfig, initializeContext, handleError, getEnvConfig } from
 async function updateFuel(
     networkNodeId: string,
     adminAcl: string,
-    client: SuiJsonRpcClient,
+    client: SuiGrpcClient,
     keypair: Ed25519Keypair,
     config: ReturnType<typeof getConfig>
 ) {
@@ -96,11 +97,7 @@ async function updateFuel(
         arguments: [currentHotPotato],
     });
 
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer: keypair,
-        options: { showObjectChanges: true, showEffects: true },
-    });
+    const result = await executeGrpcTransaction(client, tx, keypair);
 
     // Get fuel quantity after update
     const fuelAfter = await getFuelQuantity(networkNodeId, client, config);

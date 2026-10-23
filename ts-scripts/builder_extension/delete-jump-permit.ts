@@ -1,5 +1,6 @@
 import "dotenv/config";
-import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
+import { getOwnedJumpPermitId } from "./jump-permit";
 import { Transaction } from "@mysten/sui/transactions";
 import { MODULES } from "../utils/config";
 import {
@@ -12,21 +13,6 @@ import {
 
 // Upgraded world package ID (published-at from Move.toml)
 const WORLD_PACKAGE_LATEST = process.env.UPGRADED_WORLD_PACKAGE_ID || "";
-
-async function getOwnedJumpPermitId(
-    client: SuiJsonRpcClient,
-    owner: string,
-    worldPackageId: string
-): Promise<string | null> {
-    const type = `${worldPackageId}::${MODULES.GATE}::JumpPermit`;
-    const res = await client.getOwnedObjects({
-        owner,
-        filter: { StructType: type },
-        limit: 1,
-    });
-    const first = res.data?.[0]?.data;
-    return first?.objectId ?? null;
-}
 
 async function deleteJumpPermit(ctx: ReturnType<typeof initializeContext>) {
     const { client, keypair, config, address } = ctx;
@@ -48,11 +34,7 @@ async function deleteJumpPermit(ctx: ReturnType<typeof initializeContext>) {
         arguments: [tx.object(jumpPermitId)],
     });
 
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer: keypair,
-        options: { showEffects: true, showObjectChanges: true, showEvents: true },
-    });
+    const result = await executeGrpcTransaction(client, tx, keypair, { events: true });
 
     console.log("JumpPermit deleted:", jumpPermitId);
     console.log("Transaction digest:", result.digest);

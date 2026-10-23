@@ -8,6 +8,7 @@
  * Or set those in .env. Use the Currency<EVE> object ID (owner 0xc), not the Coin or other objects.
  */
 import "dotenv/config";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 import { Transaction } from "@mysten/sui/transactions";
 import { createClient, keypairFromPrivateKey } from "../utils/client";
 
@@ -40,12 +41,8 @@ async function main() {
 
     const coinType = `${packageId}::EVE::EVE`;
 
-    const res = await client.getObject({ id: currencyObjectId });
-    if (!res.data) {
-        console.error("Currency object not found:", currencyObjectId, res.error ?? "");
-        process.exit(1);
-    }
-    const { objectId, version, digest } = res.data;
+    const { object } = await client.getObject({ objectId: currencyObjectId });
+    const { objectId, version, digest } = object;
     const currencyRef = { objectId, version, digest };
 
     const tx = new Transaction();
@@ -56,19 +53,10 @@ async function main() {
         arguments: [tx.object(COIN_REGISTRY_ID), tx.receivingRef(currencyRef)],
     });
 
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer: keypair,
-        options: { showObjectChanges: true, showEffects: true },
-    });
+    const result = await executeGrpcTransaction(client, tx, keypair);
 
-    if (result.effects?.status?.status === "success") {
-        console.log("EVE currency finalized in CoinRegistry.");
-        console.log("Digest:", result.digest);
-    } else {
-        console.error("Finalize failed:", result.effects?.status);
-        process.exit(1);
-    }
+    console.log("EVE currency finalized in CoinRegistry.");
+    console.log("Digest:", result.digest);
 }
 
 main().catch((e) => {

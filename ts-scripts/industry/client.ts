@@ -1,5 +1,5 @@
 import { bcs } from "@mysten/sui/bcs";
-import type { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import type { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Transaction } from "@mysten/sui/transactions";
 import { deriveObjectID, deriveDynamicFieldID, isValidSuiObjectId, normalizeSuiAddress } from "@mysten/sui/utils";
 import { parseIndustrySnapshot, parseIndustryProduction, parseIndustryLaneProductions, parseIndustryLaneStates, u64, type IndustrySnapshot, type IndustryProduction, type IndustryLaneProduction, type IndustryLaneState } from "./snapshot";
@@ -57,6 +57,29 @@ function fields(value: any): any {
     return value?.fields ?? value;
 }
 
+type IndustryReader = Pick<SuiGrpcClient, "getObject"> & {
+    ledgerService: Pick<SuiGrpcClient["ledgerService"], "getObject">;
+};
+
+async function readOptionalObject(client: IndustryReader, objectId: string) {
+    try {
+        const { object } = await client.getObject({ objectId, include: { json: true } });
+        if (!object) throw new Error(`Missing object response for ${objectId}`);
+        return object;
+    } catch (error) {
+        // SDK 2.4 drops the per-object gRPC error code in its batch-backed core
+        // API. Confirm absence through GetObject, which retains NOT_FOUND;
+        // never interpret an unavailable node or malformed response as absence.
+        try {
+            await client.ledgerService.getObject({ objectId, readMask: { paths: ["object_id"] } });
+        } catch (confirmationError) {
+            if (confirmationError instanceof Error && "code" in confirmationError &&
+                confirmationError.code === "NOT_FOUND") return null;
+        }
+        throw error;
+    }
+}
+
 export function deriveProductionFieldId(industryId: string): string {
     return deriveDynamicFieldID(industryId, "u8", bcs.u8().serialize(0).toBytes());
 }
@@ -67,15 +90,13 @@ export function deriveLaneStateFieldId(industryId: string): string {
     return deriveDynamicFieldID(industryId, "u8", bcs.u8().serialize(2).toBytes());
 }
 
-async function readProduction(client: Pick<SuiJsonRpcClient, "getObject">, industryId: string, revision: string, allowStaleRevision = false) {
-    const result = await client.getObject({ id: deriveProductionFieldId(industryId), options: { showContent: true, showOwner: true } });
-    if (result.error?.code === "notExists") return { production: null, productionMirrored: false };
-    const content = result.data?.content;
-    const owner = result.data?.owner;
-    if (result.error || content?.dataType !== "moveObject" || !owner || typeof owner !== "object" ||
-        !("ObjectOwner" in owner) || objectId(owner.ObjectOwner) !== industryId ||
-        !/^0x0*2::dynamic_field::Field<u8, 0x[0-9a-f]+::smart_industry::ProductionRecord>$/.test(content.type)) throw new Error("Invalid production field");
-    const value = content.fields as any;
+async function readProduction(client: IndustryReader, industryId: string, revision: string, allowStaleRevision = false) {
+    const result = await readOptionalObject(client, deriveProductionFieldId(industryId));
+    if (!result) return { production: null, productionMirrored: false };
+    const owner = result.owner;
+    if (!result.json || owner?.$kind !== "ObjectOwner" || objectId(owner.ObjectOwner) !== industryId ||
+        !/^0x0*2::dynamic_field::Field<u8,0x[0-9a-f]+::smart_industry::ProductionRecord>$/.test(result.type)) throw new Error("Invalid production field");
+    const value = result.json as any;
     const record = fields(value.value);
     if (Number(value.name) !== 0) throw new Error("Invalid production field name");
     const productionMirrored = u64(record?.revision, "production revision", true) === revision;
@@ -92,22 +113,20 @@ async function readProduction(client: Pick<SuiJsonRpcClient, "getObject">, indus
     }), productionMirrored };
 }
 
-async function readLaneProductions(client: Pick<SuiJsonRpcClient, "getObject">, industryId: string, revision: string, allowStaleRevision = false) {
-    const result = await client.getObject({ id: deriveLaneProductionFieldId(industryId), options: { showContent: true, showOwner: true } });
-    if (result.error?.code === "notExists") {
+async function readLaneProductions(client: IndustryReader, industryId: string, revision: string, allowStaleRevision = false) {
+    const result = await readOptionalObject(client, deriveLaneProductionFieldId(industryId));
+    if (!result) {
         const legacy = await readProduction(client, industryId, revision, allowStaleRevision);
         return { productions: [{ lane_id: "1", production: legacy.production }],
             productionsMirrored: legacy.productionMirrored, production: legacy.production,
             productionMirrored: legacy.productionMirrored };
     }
-    const content = result.data?.content;
-    const owner = result.data?.owner;
-    if (result.error || content?.dataType !== "moveObject" || !owner || typeof owner !== "object" ||
-        !("ObjectOwner" in owner) || objectId(owner.ObjectOwner) !== industryId ||
-        !/^0x0*2::dynamic_field::Field<u8, 0x[0-9a-f]+::smart_industry::LaneProductionRecord>$/.test(content.type)) {
+    const owner = result.owner;
+    if (!result.json || owner?.$kind !== "ObjectOwner" || objectId(owner.ObjectOwner) !== industryId ||
+        !/^0x0*2::dynamic_field::Field<u8,0x[0-9a-f]+::smart_industry::LaneProductionRecord>$/.test(result.type)) {
         throw new Error("Invalid lane production field");
     }
-    const value = content.fields as any;
+    const value = result.json as any;
     const record = fields(value.value);
     if (Number(value.name) !== 1 || !Array.isArray(record?.lanes)) throw new Error("Invalid lane production field name");
     const productionsMirrored = u64(record.revision, "lane production revision", true) === revision;
@@ -146,27 +165,25 @@ function snapshotFromMove(rawValue: any): IndustrySnapshot {
 }
 
 async function readLaneStates(
-    client: Pick<SuiJsonRpcClient, "getObject">,
+    client: IndustryReader,
     industryId: string,
     revision: string,
     rootSnapshot: IndustrySnapshot,
     allowStaleRevision = false,
 ) {
-    const result = await client.getObject({ id: deriveLaneStateFieldId(industryId), options: { showContent: true, showOwner: true } });
-    if (result.error?.code === "notExists") {
+    const result = await readOptionalObject(client, deriveLaneStateFieldId(industryId));
+    if (!result) {
         const legacy = await readLaneProductions(client, industryId, revision, allowStaleRevision);
         return { ...legacy,
             lanes: legacy.productions.map((lane) => ({ ...lane, snapshot: rootSnapshot })),
             laneStatesMirrored: false };
     }
-    const content = result.data?.content;
-    const owner = result.data?.owner;
-    if (result.error || content?.dataType !== "moveObject" || !owner || typeof owner !== "object" ||
-        !("ObjectOwner" in owner) || objectId(owner.ObjectOwner) !== industryId ||
-        !/^0x0*2::dynamic_field::Field<u8, 0x[0-9a-f]+::smart_industry::LaneStateRecord>$/.test(content.type)) {
+    const owner = result.owner;
+    if (!result.json || owner?.$kind !== "ObjectOwner" || objectId(owner.ObjectOwner) !== industryId ||
+        !/^0x0*2::dynamic_field::Field<u8,0x[0-9a-f]+::smart_industry::LaneStateRecord>$/.test(result.type)) {
         throw new Error("Invalid lane state field");
     }
-    const value = content.fields as any;
+    const value = result.json as any;
     const record = fields(value.value);
     if (Number(value.name) !== 2 || !Array.isArray(record?.lanes)) throw new Error("Invalid lane state field name");
     const laneStatesMirrored = u64(record.revision, "lane state revision", true) === revision;
@@ -196,32 +213,25 @@ async function readLaneStates(
 }
 
 export async function readIndustry(
-    client: Pick<SuiJsonRpcClient, "getObject">,
+    client: IndustryReader,
     world: IndustryWorld,
     assemblyId: string,
     repairProduction = false
 ): Promise<IndustryState | null> {
     const id = deriveIndustryId(world, assemblyId);
-    const result = await client.getObject({ id, options: { showContent: true, showOwner: true } });
-    if (result.error?.code === "notExists") return null;
-    if (result.error) throw new Error(`Cannot read Smart Industry: ${result.error.code}`);
-    const content = result.data?.content;
+    const result = await readOptionalObject(client, id);
+    if (!result) return null;
     if (
-        !content ||
-        content.dataType !== "moveObject" ||
-        content.type !==
+        !result.json ||
+        result.type !==
             `${objectId(world.industryTypeOrigin || world.industryPackageId || world.packageId)}::smart_industry::SmartIndustry`
     ) {
         throw new Error("Unexpected Smart Industry object type");
     }
-    if (
-        !result.data?.owner ||
-        typeof result.data.owner !== "object" ||
-        !("Shared" in result.data.owner)
-    ) {
+    if (result.owner?.$kind !== "Shared") {
         throw new Error("Smart Industry must be a shared object");
     }
-    const value = content.fields as Record<string, any>;
+    const value = result.json as Record<string, any>;
     if (objectId(value.assembly_id) !== objectId(assemblyId))
         throw new Error("Smart Industry parent mismatch");
     const snapshot = snapshotFromMove(value.snapshot);

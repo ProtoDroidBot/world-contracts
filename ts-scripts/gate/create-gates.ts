@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { executeGrpcTransaction } from "../utils/grpc-transaction";
 import { Transaction } from "@mysten/sui/transactions";
 import { bcs } from "@mysten/sui/bcs";
 import { MODULES } from "../utils/config";
@@ -52,11 +53,7 @@ async function createGate(
         arguments: [gate, tx.object(adminAcl)],
     });
 
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer: keypair,
-        options: { showEvents: true, showEffects: true, showObjectChanges: true },
-    });
+    const result = await executeGrpcTransaction(client, tx, keypair, { events: true });
 
     const gateEvent = extractEvent<{ assembly_id: string; owner_cap_id: string }>(
         result,

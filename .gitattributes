@@ -1,0 +1,6 @@
+# This submodule is also checked out on Windows and executed inside Linux.
+*.sh text eol=lf
+Dockerfile* text eol=lf
+env.example text eol=lf
+env.*.example text eol=lf
+.env.example text eol=lf

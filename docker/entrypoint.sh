@@ -6,7 +6,10 @@ cd /app
 
 # ── Load .env ────────────────────────────────────────────────────────────────
 if [ -f .env ]; then
-    set -a && source .env && set +a
+    # Compose mounts this file read-only; strip CRLF while reading it.
+    set -a
+    source <(sed 's/\r$//' .env)
+    set +a
 else
     echo "Error: .env file not found. Mount it to /app/.env"
     exit 1

@@ -11,6 +11,7 @@
  * Run: pnpm run get-priority-list
  */
 import "dotenv/config";
+import { pathToFileURL } from "node:url";
 import { Transaction } from "@mysten/sui/transactions";
 import { bcs } from "@mysten/sui/bcs";
 import { HydratedWorldConfig, MODULES } from "../utils/config";
@@ -24,7 +25,7 @@ import {
 import { deriveObjectId } from "../utils/derive-object-id";
 import { devInspectMoveCallFirstReturnValueBytes } from "../utils/dev-inspect";
 import { GAME_CHARACTER_ID, TURRET_ITEM_ID } from "../utils/constants";
-import type { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import type { SuiGrpcClient } from "@mysten/sui/grpc";
 
 export type TurretExtensionInfo = {
     hasExtension: boolean;
@@ -79,7 +80,7 @@ export const ReturnTargetPriorityListBcs = bcs.struct("ReturnTargetPriorityList"
  * Mandatory: always call is_extension_configured first; extension_type aborts if no extension is configured.
  */
 export async function getTurretExtensionInfo(
-    client: SuiJsonRpcClient,
+    client: SuiGrpcClient,
     worldPackageId: string,
     turretId: string
 ): Promise<TurretExtensionInfo> {
@@ -129,12 +130,11 @@ export function parseReturnPriorityList(returnBytes: Uint8Array): ReturnTargetPr
     }));
 }
 
-function parseDevInspectReturn(returnValues: unknown): ReturnTargetPriorityListArg[] {
-    const arr = returnValues as [Uint8Array | number[], unknown][] | undefined;
-    if (!arr?.length) return [];
-    const raw = arr[0][0];
-    const returnBytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
-    return parseReturnPriorityList(returnBytes);
+function parseSimulationReturn(
+    returnValues: { bcs: Uint8Array }[] | undefined
+): ReturnTargetPriorityListArg[] {
+    if (!returnValues?.length) return [];
+    return parseReturnPriorityList(returnValues[0].bcs);
 }
 
 /**
@@ -167,17 +167,18 @@ export async function getTurretPriorityListFromWorld(
         ],
     });
 
-    const result = await client.devInspectTransactionBlock({
-        sender: keypair.getPublicKey().toSuiAddress(),
-        transactionBlock: tx,
+    tx.setSender(keypair.getPublicKey().toSuiAddress());
+    const result = await client.simulateTransaction({
+        transaction: tx,
+        include: { commandResults: true },
     });
-
-    if (result.effects?.status?.status !== "success") {
-        const err = result.effects?.status?.error ?? result.effects?.status;
-        throw new Error(`DevInspect failed: ${JSON.stringify(err)}`);
+    const simulated =
+        result.$kind === "Transaction" ? result.Transaction : result.FailedTransaction;
+    if (!simulated.status.success) {
+        throw new Error(`Turret simulation failed: ${simulated.status.error.message}`);
     }
 
-    return parseDevInspectReturn(result.results?.[1]?.returnValues);
+    return parseSimulationReturn(result.commandResults?.[1]?.returnValues);
 }
 
 /**
@@ -215,15 +216,17 @@ export async function getTurretPriorityList(
             ],
         });
 
-        const result = await client.devInspectTransactionBlock({
-            sender: keypair.getPublicKey().toSuiAddress(),
-            transactionBlock: tx,
+        tx.setSender(keypair.getPublicKey().toSuiAddress());
+        const result = await client.simulateTransaction({
+            transaction: tx,
+            include: { commandResults: true },
         });
-        if (result.effects?.status?.status !== "success") {
-            const err = result.effects?.status?.error ?? result.effects?.status;
-            throw new Error(`DevInspect failed: ${JSON.stringify(err)}`);
+        const simulated =
+            result.$kind === "Transaction" ? result.Transaction : result.FailedTransaction;
+        if (!simulated.status.success) {
+            throw new Error(`Turret simulation failed: ${simulated.status.error.message}`);
         }
-        return parseDevInspectReturn(result.results?.[1]?.returnValues);
+        return parseSimulationReturn(result.commandResults?.[1]?.returnValues);
     }
 
     return getTurretPriorityListFromWorld(turretId, characterId, candidates, ctx);
@@ -285,4 +288,6 @@ async function main() {
     }
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    main();
+}
