@@ -2,63 +2,29 @@
 # Pin versions for reproducible CI. Override with build-args if needed.
 FROM docker.io/library/ubuntu:24.04
 
-# Sui version/network: testnet, devnet, mainnet, or a version tag.
-# Must match Move.toml/Move.lock rev (e.g. testnet-v1.75.1) so the CLI can parse the lockfile.
-ARG SUI_VERSION=testnet-v1.75.1
+ARG PNPM_VERSION=12.10.1
+ARG SUI_VERSION=testnet-v1.78.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 # Retry apt fetches; --fix-missing for archive 404s on rotated packages (e.g. python3.12).
 # Sanity check ensures required tools are present so CI fails fast if anything was skipped.
 RUN apt-get -o Acquire::Retries=3 update \
-  && apt-get -o Acquire::Retries=3 install -y --no-install-recommends --fix-missing \
-  ca-certificates \
-  curl \
-  git \
-  jq \
-  dos2unix \
-  && apt-get clean && rm -rf /var/lib/apt/lists/* \
-  && command -v curl >/dev/null && command -v git >/dev/null && command -v jq >/dev/null && command -v dos2unix >/dev/null
-
-# Install the Node version pinned in .nvmrc, then enable pnpm via corepack.
-COPY .nvmrc /tmp/.nvmrc
-RUN NODE_VERSION="$(tr -d '[:space:]' < /tmp/.nvmrc)" \
-  && case "$(uname -m)" in \
-  x86_64) node_arch=x64 ;; \
-  aarch64 | arm64) node_arch=arm64 ;; \
-  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;; \
-  esac \
-  && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.gz" \
-  | tar -xz -C /usr/local --strip-components=1 \
-  && corepack enable \
-  && rm /tmp/.nvmrc \
-  && node -v | grep -qx "v${NODE_VERSION}" \
-  && command -v corepack >/dev/null && command -v pnpm >/dev/null
-
-# pnpm version is pinned by the "packageManager" field in package.json (mounted at /app).
-# Let corepack download the pinned pnpm without an interactive prompt.
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+    && apt-get -o Acquire::Retries=3 install -y --no-install-recommends --fix-missing \
+    ca-certificates \
+    curl \
+    git \
+    jq \
+    dos2unix \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+    && apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs \
+    && npm install -g "pnpm@${PNPM_VERSION}" \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    && command -v curl >/dev/null && command -v git >/dev/null && command -v jq >/dev/null && command -v dos2unix >/dev/null && command -v node >/dev/null
 
 ENV PATH="/root/.local/bin:/root/.suiup/bin:${PATH}"
-
-# Install suiup from a pinned release rather than piping its install.sh. The
-# upstream installer resolves its own latest version by grepping the GitHub API
-# with a sed that assumes pretty-printed JSON; when the API returns compact JSON
-# (which a GitHub Actions build hit -- the API doesn't guarantee formatting) the
-# whole JSON blob becomes the "version" and the download URL breaks ("curl: (3)
-# nested brace in URL"). Pinning the release avoids that call entirely and makes
-# the image reproducible; the arch suffix keeps it correct for amd64 and arm64.
-ARG SUIUP_VERSION=v0.0.13
-RUN case "$(uname -m)" in \
-  x86_64) suiup_arch=x86_64 ;; \
-  aarch64 | arm64) suiup_arch=arm64 ;; \
-  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;; \
-  esac \
-  && curl -fsSL "https://github.com/MystenLabs/suiup/releases/download/${SUIUP_VERSION}/suiup-Linux-musl-${suiup_arch}.tar.gz" -o /tmp/suiup.tar.gz \
-  && tar -xzf /tmp/suiup.tar.gz -C /usr/local/bin suiup \
-  && rm /tmp/suiup.tar.gz \
-  && echo y | suiup install "sui@${SUI_VERSION}" \
-  && sui --version \
-  && rm -rf /root/.cache/suiup
+RUN curl -sSfL https://raw.githubusercontent.com/MystenLabs/suiup/main/install.sh | sh \
+    && echo y | suiup install "sui@${SUI_VERSION}" \
+    && sui --version
 
 WORKDIR /app
 ENV SUI_CONFIG_DIR=/root/.sui
@@ -68,5 +34,10 @@ RUN dos2unix /entrypoint.sh && chmod +x /entrypoint.sh
 
 COPY docker/entrypoint-snapshot-image.sh /entrypoint-snapshot-image.sh
 RUN dos2unix /entrypoint-snapshot-image.sh && chmod +x /entrypoint-snapshot-image.sh
+
+# Deterministic genesis assets (genesis-config.yaml + accounts.json). Source code
+# is NOT baked in — it is mounted at /app at run time (see bake-snapshot-image.sh
+# and the integration workflow), so contract changes need no image rebuild.
+COPY docker/genesis /genesis
 
 ENTRYPOINT ["/entrypoint.sh"]

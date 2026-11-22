@@ -8,22 +8,98 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 setup() {
     cd "$REPO_ROOT"
-    if [ -f .env ]; then
-        # Windows-edited files may be mounted read-only. Normalize the input
-        # stream, preserving the original file and its credentials.
+    if [ -z "${WORLD_IGNORE_DOTENV:-}" ] && [ -f .env ]; then
         set -a
-        source <(sed 's/\r$//' .env)
+        source .env
         set +a
     fi
 }
 
 get_env() {
-    local env="${1:-${SUI_NETWORK:-localnet}}"
+    local env="${1:-${DEPLOY_ENV:-${SUI_NETWORK:-localnet}}}"
     [[ "$env" == "local" ]] && env="localnet"
     case "$env" in
-        localnet|testnet|mainnet|devnet) echo "$env" ;;
-        *) echo "Usage: $0 [localnet|testnet|mainnet|devnet]" >&2; exit 1 ;;
+        localnet|dev|test|uat|live) echo "$env" ;;
+        *) echo "get_env: unknown env '$env' (want localnet|dev|test|uat|live)" >&2; exit 1 ;;
     esac
+}
+
+get_network() {
+    case "$1" in
+        localnet)      echo "localnet" ;;
+        dev|test|uat)  echo "testnet" ;;
+        live)          echo "mainnet" ;;
+        *) echo "get_network: unknown env '$1'" >&2; exit 1 ;;
+    esac
+}
+
+get_rpc() {
+    case "$1" in
+        localnet)      echo "http://127.0.0.1:9000" ;;
+        dev|test|uat)  echo "https://fullnode.testnet.sui.io:443" ;;
+        live)          echo "https://fullnode.mainnet.sui.io:443" ;;
+        *) echo "get_rpc: unknown env '$1'" >&2; exit 1 ;;
+    esac
+}
+
+# Publish owns creating the env dir. No-op if it already exists.
+ensure_deploy_dir() {
+    local dir="deployments/$1"
+    [[ -d "$dir" ]] || mkdir -p "$dir"
+}
+
+# MVR / bootstrap never create the env; they only patch world.json.
+require_world_json() {
+    local world="deployments/$1/world.json"
+    [[ -f "$world" ]] || {
+        echo "ERROR: $world missing — publish the env first" >&2
+        exit 1
+    }
+}
+
+# Create an empty Sui client config if none exists, so keytool/client can write.
+# Needed when running without the image entrypoint (which does its own init).
+sui_init_config() {
+    local env=$1 rpc=$2 cfg="$HOME/.sui/sui_config"
+    [[ -f "$cfg/client.yaml" ]] && return 0
+    mkdir -p "$cfg"
+    cat > "$cfg/client.yaml" <<EOF
+---
+keystore:
+  File: $cfg/sui.keystore
+envs:
+  - alias: $env
+    rpc: "$rpc"
+    ws: ~
+    basic_auth: ~
+active_env: $env
+active_address: ~
+EOF
+    echo "[]" > "$cfg/sui.keystore"
+}
+
+# Import a private key into the keystore (idempotent), print its address.
+import_key() {
+    local key=$1 out rc
+    [[ -z "$key" ]] && return 0
+    set +e
+    out=$(sui keytool import "$key" "${KEY_SCHEME:-ed25519}" 2>&1)
+    rc=$?
+    set -e
+    if [[ $rc -ne 0 ]] && ! grep -qi "already exists" <<<"$out"; then
+        echo "import_key: $out" >&2
+        return 1
+    fi
+    grep -oE '0x[a-fA-F0-9]{64}' <<<"$out" | head -1
+}
+
+# publish builds for the active client env and writes [published.<active-env>],
+# so the client env name must equal the Move env name (dev/test/uat).
+ensure_client_env() {
+    local env=$1 rpc=$2
+    sui client switch --env "$env" >/dev/null 2>&1 \
+        || sui client new-env --alias "$env" --rpc "$rpc" >/dev/null
+    sui client switch --env "$env" >/dev/null
 }
 
 # Start logging to deployments/$env/deploy.log. Call after get_env and mkdir.
@@ -38,52 +114,60 @@ start_logging() {
     exec 1> >(tee -a "$LOG") 2>&1
 }
 
-publish() {
-    local pkg=$1
-    local out_file=$2
-    local env=$3
-    local localnet_pubfile=${4:-}
+# Run `sui <cmd> --json` from contracts/$pkg, capture output, fail on non-JSON.
+# Args: pkg env action out_file cmd...
+_run_pkg_cmd() {
+    local pkg=$1 env=$2 action=$3 out_file=$4
+    shift 4
     local tmp tmp_err
     tmp=$(mktemp)
     tmp_err=$(mktemp)
-    trap 'rm -f -- "$tmp" "$tmp_err"' RETURN
 
-    sui client switch --env "$env"
+    (cd "contracts/$pkg" && "$@" --json) > "$tmp" 2> "$tmp_err" || true
 
-    # JSON goes to stdout; build progress often goes to stderr. Do not merge (2>&1) or extract-json breaks.
-    if [[ "$env" == "localnet" ]]; then
-        if [[ -n "$localnet_pubfile" ]]; then
-            # Path is relative to contracts/$pkg (same as test-publish cwd); check from there.
-            if ! (cd "contracts/$pkg" && [[ -f "$localnet_pubfile" && -r "$localnet_pubfile" ]]); then
-                echo "Error: localnet pubfile not found or not readable: $localnet_pubfile (from contracts/$pkg)" >&2
-                exit 1
-            fi
-            (cd "contracts/$pkg" && sui client test-publish --build-env testnet --pubfile-path "$localnet_pubfile" --json) > "$tmp" 2> "$tmp_err" || true
-        else
-            (cd "contracts/$pkg" && sui client test-publish --build-env testnet --json) > "$tmp" 2> "$tmp_err" || true
-        fi
-    else
-        (cd "contracts/$pkg" && sui client publish --json) > "$tmp" 2> "$tmp_err" || true
-    fi
-
-    pnpm exec tsx ts-scripts/utils/extract-json.ts "$tmp" > "$out_file" || true
-
-    log="${LOG:-deployments/$env/deploy.log}"
     {
         echo ""
-        echo "--- Publish output ---"
+        echo "--- $action $pkg output ---"
         cat "$tmp"
         if [[ -s "$tmp_err" ]]; then
-            echo ""
-            echo "--- Publish stderr ---"
+            echo "--- $action $pkg stderr ---"
             cat "$tmp_err"
         fi
-    } >> "$log"
+    } >> "${LOG:-deployments/$env/deploy.log}"
 
-    if [[ ! -s "$out_file" ]]; then
-        echo "" >&2
-        echo "=== Publish failed. Raw output ===" >&2
+    # On dependency/build errors sui prints a plain message to stdout, not JSON.
+    if [[ "$(head -c1 "$tmp")" != "{" ]]; then
+        echo "ERROR: $action '$pkg' failed:" >&2
         cat "$tmp" "$tmp_err" >&2
+        rm -f -- "$tmp" "$tmp_err"
         exit 1
     fi
+
+    cp "$tmp" "$out_file"
+    rm -f -- "$tmp" "$tmp_err"
+    echo "$action $pkg -> $out_file"
+}
+
+# localnet test-publishes into the shared ephemeral $pubfile; named envs publish
+# against the active client env, maintaining the committed Published.toml.
+publish() {
+    local pkg=$1 env=$2 pubfile=$3 out_file=$4
+    if [[ "$env" == "localnet" ]]; then
+        _run_pkg_cmd "$pkg" "$env" "Publish" "$out_file" \
+            sui client test-publish --build-env testnet --pubfile-path "$pubfile"
+    else
+        _run_pkg_cmd "$pkg" "$env" "Publish" "$out_file" \
+            sui client publish
+    fi
+}
+
+# Upgrade reuses the UpgradeCap recorded in the committed Published.toml.
+upgrade() {
+    local pkg=$1 env=$2 out_file=$3
+    if [[ "$env" == "localnet" ]]; then
+        echo "ERROR: upgrade is not supported for localnet (ephemeral test-publish)." >&2
+        exit 1
+    fi
+    _run_pkg_cmd "$pkg" "$env" "Upgrade" "$out_file" \
+        sui client upgrade
 }

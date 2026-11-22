@@ -1,6 +1,7 @@
 # Move build artifacts
 **/**/build
 **/**/target
+**/traces/*
 **/**/.trace
 **/**/.coverage*
 
@@ -15,8 +16,12 @@ node_modules/
 .idea/
 *.log
 
-# Deployment debug files
+# Deployment debug files (raw publish JSON, logs). Commit only the per-env
+# world.json supplement for published envs; localnet stays ephemeral.
 deployments/**
+!deployments/*/
+!deployments/*/world.json
+deployments/localnet/world.json
 .env
 
 # docs
@@ -24,15 +29,14 @@ docs/features/
 prd.md
 
 # contracts
-contracts/world/sources/primitives/template.move
-contracts/world/.replay/
-contracts/verify/
-contracts/extension_examples/Published.toml
 contracts/**/Pub.*.toml
+# ephemeral publish files (shared pubfile lives under deployments/)
+Pub.*.toml
 
 # Error decoder build artifacts
 tools/error-decoder/*.js
 tools/error-decoder/*.js.map
+tools/error-decoder/error-map.json
 tools/error-decoder/dist/
 dist/
 .replay/
@@ -40,3 +44,10 @@ dist/
 # pnpm-store when pnpm install executed in containers
 .pnpm-store
 
+docs/v1/
+.secrets
+.vars
+.claude/skills/*
+.cursor/rules/
+# Local-only. The .claude/skills symlink points here.
+agentictools/skills/*-review/

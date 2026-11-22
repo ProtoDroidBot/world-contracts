@@ -1,80 +1,65 @@
+ARG SUI_VERSION=testnet-v1.78.0
+FROM mysten/sui-tools:${SUI_VERSION} AS dependency-stage
 
-# mysten/sui-tools has no multi-arch manifest: amd64 lives under the plain tag,
-# arm64 under a separate "-arm64" tag. Declare both and let BuildKit pick the one
-# matching the build's TARGETARCH (base-amd64 / base-arm64), so a native arm64
-# build (Apple Silicon) gets a real arm64 base instead of an emulated amd64 one.
-ARG SUI_TOOLS_VERSION=testnet-v1.75.1
-FROM mysten/sui-tools:${SUI_TOOLS_VERSION} AS base-amd64
-FROM mysten/sui-tools:${SUI_TOOLS_VERSION}-arm64 AS base-arm64
+ARG PNPM_VERSION=12.10.1
+ARG NODE_VERSION=24.22.1
 
-ARG TARGETARCH
-FROM base-${TARGETARCH} AS dependency-stage
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    jq \
-    curl \
+# sui-tools is Debian 11. debian-security 404s rotated debs and nodesource
+# needs gnupg from that repo. Install jq/curl from main; Node from nodejs.org.
+#
+# mysten/sui-tools only publishes an amd64 image, so this stage's base
+# content is always amd64 regardless of the requested --platform.
+RUN find /etc/apt -name '*.list' -exec sed -i '/security/s/^/#/' {} + \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends jq curl \
+    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" \
+    | tar -xz -C /usr/local --strip-components=1 \
+    && npm install -g "pnpm@${PNPM_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 
-# Install the Node version pinned in .nvmrc, then enable pnpm via corepack.
-# (pnpm version is pinned by the "packageManager" field in package.json)
-ARG TARGETARCH
-COPY .nvmrc /tmp/.nvmrc
-RUN NODE_VERSION="$(tr -d '[:space:]' < /tmp/.nvmrc)" \
-    && case "${TARGETARCH}" in \
-    amd64) node_arch=x64 ;; \
-    arm64) node_arch=arm64 ;; \
-    *) echo "unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac \
-    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.gz" \
-    | tar -xz -C /usr/local --strip-components=1 \
-    && corepack enable \
-    && rm /tmp/.nvmrc \
-    && node -v | grep -qx "v${NODE_VERSION}"
-
-# Let corepack download the pinned pnpm without an interactive prompt
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-
 # Verify installations
-RUN sui --version && node --version && jq --version
+RUN sui --version && node --version && pnpm --version && jq --version
 
-WORKDIR /app
-
-# Copy package files and install dependencies with pnpm
-# (pnpm version is resolved from the "packageManager" field in package.json)
-COPY package*.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm --version && pnpm install --no-frozen-lockfile
-
-COPY . .
-
-# Run as deployer:deployer (non-root user)
+# Create the non-root user before installing so files are owned correctly at
+# copy/install time — avoids a costly recursive chown of node_modules.
 RUN groupadd -r deployer && \
     useradd -r -g deployer -m -d /home/deployer deployer
-RUN chown -R deployer:deployer /app
+
+WORKDIR /app
+RUN chown deployer:deployer /app
 USER deployer
 
-FROM dependency-stage AS lint-stage
-RUN pnpm run fmt:check
+# Pre-create client.yaml so parallel `sui move build` does not race on first-run init.
+RUN mkdir -p /home/deployer/.sui/sui_config \
+    && printf '%s\n' '[]' > /home/deployer/.sui/sui_config/sui.keystore \
+    && chmod 600 /home/deployer/.sui/sui_config/sui.keystore \
+    && printf '%s\n' \
+    '---' \
+    'keystore:' \
+    '  File: /home/deployer/.sui/sui_config/sui.keystore' \
+    'envs:' \
+    '  - alias: testnet' \
+    '    rpc: "https://fullnode.testnet.sui.io:443"' \
+    '    ws: ~' \
+    '    basic_auth: ~' \
+    'active_env: testnet' \
+    'active_address: ~' \
+    > /home/deployer/.sui/sui_config/client.yaml \
+    && test -s /home/deployer/.sui/sui_config/client.yaml
+
+# Copy workspace manifests first for better layer caching, then install with pnpm
+COPY --chown=deployer:deployer package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+RUN pnpm install --frozen-lockfile
+
+COPY --chown=deployer:deployer . .
 
 FROM dependency-stage AS build-stage
-# Build all Move contracts in parallel. The first `sui` invocation creates
-# ~/.sui/{client.yaml,sui.aliases}; running several in parallel (xargs -P 4)
-# makes concurrent first-runs race and corrupt those files ("EOF while parsing
-# a value", "Cannot deserialize aliases file"), which fails the build
-# nondeterministically. Build one package serially first to create the config,
-# then build them all in parallel against the now-existing config.
-RUN set -eu; \
-    first="$(find contracts -maxdepth 1 -mindepth 1 -type d | head -n1)"; \
-    sui move build --path "$first"; \
-    find contracts -maxdepth 1 -mindepth 1 -type d | \
-    xargs -P 4 -I {} sui move build --path {}
+RUN pnpm run build
 
-FROM build-stage AS test-stage
-# Run all tests in parallel. Safe to parallelize: the Sui config was already
-# created in build-stage and is inherited via this FROM, so there is no
-# concurrent first-run config race here.
-RUN find contracts -maxdepth 1 -mindepth 1 -type d | \
-    xargs -P 4 -I {} sui move test --path {}
+FROM dependency-stage AS ci-stage
+RUN pnpm run fmt:check
+RUN pnpm run lint
+RUN pnpm run test
 
 FROM dependency-stage AS release-stage
 ENV CI=true

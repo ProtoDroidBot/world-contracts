@@ -1,0 +1,24 @@
+---
+description: Sui Move conventions for the world-contracts modular architecture
+globs: **/*.move
+alwaysApply: false
+---
+
+# Move Conventions (world-contracts)
+
+**The authoritative conventions live in [`docs/move-conventions.md`](../../docs/move-conventions.md).**
+Read it before writing or reviewing `.move` code. For the domain vocabulary see
+[`CONTEXT.md`](../../CONTEXT.md); for the design rationale see
+[`docs/adr/0002-modular-architecture.md`](../../docs/adr/0002-modular-architecture.md).
+
+Non-negotiables (full detail in the doc above):
+
+- Live code is `contracts/core/`; `contracts/archive/` is the deprecated `world::` assembly
+  model — do not copy its patterns.
+- Every `assert!` uses a named `E` + PascalCase `u64` error constant; no bare `abort`.
+- `// === Section ===` headers in the canonical order; objects-first, capabilities-second,
+  `ctx`/`&Clock` last in signatures.
+- Authorization is type-driven via `internal::Permit<T>` — never gated on a string/id argument;
+  component identity is read off the requirement, not handler args.
+- Every persisted struct carries `version` and asserts `version == VERSION` on entry.
+- `Request`/`Frame` are abilities-free hot potatoes minted/consumed only by `core::entity`.

@@ -1,240 +1,312 @@
 #!/usr/bin/env bash
-# CI entrypoint: start local Sui node, create keys, fund, generate .env, then exec CMD.
+# Integration / snapshot entrypoint for Dockerfile.integration.
+#
+# Brings up a DETERMINISTIC local Sui node: predefined, genesis-funded accounts
+# (signed for by the well-known test private keys committed in
+# /genesis/accounts.json), deploys the world packages, then dispatches on the
+# mode argument:
+#
+#   test       run the SDK integration tests against the freshly deployed chain
+#   snapshot   bake the chain state for the downstream snapshot image
+#   <none>     leave the node running in the foreground as a plain localnet
 set -euo pipefail
+
+MODE="${1:-}"
 
 SUI_CFG="${SUI_CONFIG_DIR:-/root/.sui}"
 KEYSTORE="$SUI_CFG/sui.keystore"
 CLIENT_YAML="$SUI_CFG/client.yaml"
-INIT_MARKER="$SUI_CFG/.initialized"
-APP_ENV="/app/.env"
-APP_ENV_EXAMPLE="/app/env.example"
-ACCOUNTS_JSON="${ACCOUNTS_JSON:-/app/docker/genesis/accounts.json}"
+DATA_DIR="/data/sui-localnet"
+GENESIS_DIR="/genesis"
+GENESIS_CONFIG="$GENESIS_DIR/genesis-config.yaml"
+ACCOUNTS_JSON="$GENESIS_DIR/accounts.json"
+STAGE_DIR="/opt/world-contracts"
+RPC_URL="http://127.0.0.1:9000"
+KEY_SCHEME="ed25519"
 
-# ---------- first-run: import the fixed test keys ----------
-if [ ! -f "$INIT_MARKER" ]; then
-  echo "[ci] First run — importing fixed test keys from $ACCOUNTS_JSON..."
-  if [ ! -f "$ACCOUNTS_JSON" ]; then
-    echo "[ci] ERROR: accounts file not found at $ACCOUNTS_JSON" >&2
+log() { echo "[integration] $*"; }
+
+RPC_WAIT_ITERATIONS="${RPC_WAIT_ITERATIONS:-120}"
+
+# Snapshot bake must reach epoch >= 1 so downstream tests that depend on
+# epoch-1 cases don't fail against a sealed epoch-0 chain.
+wait_for_epoch() {
+  local min_epoch="${1:-1}"
+  local epoch=0
+  log "Waiting for epoch >= ${min_epoch}..."
+  for i in $(seq 1 60); do
+    ensure_node_up
+    epoch="$(curl -sf -X POST "$RPC_URL" \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","id":1,"method":"suix_getLatestSuiSystemState","params":[]}' \
+      | jq -r '(.result.epoch // 0) | tonumber' || echo 0)"
+    [ "$epoch" -ge "$min_epoch" ] && break
+    sleep 2
+  done
+  if [ "${epoch:-0}" -lt "$min_epoch" ]; then
+    log "ERROR: timed out waiting for epoch >= ${min_epoch}"
     exit 1
   fi
-  mkdir -p "$SUI_CFG"
-  printf '%s' '[]' > "$KEYSTORE"
-  cat > "$CLIENT_YAML" << EOF
+  log "Epoch is ${epoch}."
+}
+
+node_alive() { [ -n "${NODE_PID:-}" ] && kill -0 "$NODE_PID" 2>/dev/null; }
+
+# Graceful node shutdown so RocksDB flushes before the snapshot is committed.
+# Pass "final" to drop the EXIT trap (snapshot bake complete).
+stop_node() {
+  local clear_trap="${1:-}"
+  local timeout="${SHUTDOWN_TIMEOUT:-60}"
+  if node_alive; then
+    kill "$NODE_PID" 2>/dev/null || true
+    while node_alive && [ "$timeout" -gt 0 ]; do
+      sleep 1
+      timeout=$((timeout - 1))
+    done
+    if node_alive; then
+      log "Node did not exit gracefully; forcing termination."
+      kill -9 "$NODE_PID" 2>/dev/null || true
+    fi
+    wait "$NODE_PID" 2>/dev/null || true
+  fi
+  if [ "$clear_trap" = "final" ]; then
+    trap - EXIT
+  fi
+}
+
+start_node() {
+  log "Starting local Sui node (${START_ARGS[*]})..."
+  sui start "${START_ARGS[@]}" >>"$NODE_LOG" 2>&1 &
+  NODE_PID=$!
+  trap 'kill "$NODE_PID" 2>/dev/null || true' EXIT
+}
+
+# 0 = RPC ready, 1 = process died, 2 = still alive but RPC never came up.
+wait_for_rpc() {
+  log "Waiting for RPC at $RPC_URL ..."
+  local i
+  for i in $(seq 1 "$RPC_WAIT_ITERATIONS"); do
+    if ! node_alive; then
+      return 1
+    fi
+    if curl -sf -X POST "$RPC_URL" -H 'Content-Type: application/json' \
+      -d '{"jsonrpc":"2.0","method":"rpc.discover","id":1}' >/dev/null 2>&1; then
+      # Confirm with a real `sui client` call too, but only every 3rd tick.
+      if [ $((i % 3)) -eq 0 ] || [ "$i" -eq 1 ]; then
+        if sui client gas "${ADDR[ADMIN]}" >/dev/null 2>&1; then
+          return 0
+        fi
+      fi
+    fi
+    sleep 1
+  done
+  return 2
+}
+
+ensure_rpc() {
+  local restarts=0
+  local max="${NODE_RESTARTS:-3}"
+  local wait_st
+  while true; do
+    wait_st=0
+    wait_for_rpc || wait_st=$?
+    if [ "$wait_st" -eq 0 ]; then
+      log "RPC ready."
+      return 0
+    fi
+    if [ "$wait_st" -eq 2 ]; then
+      log "ERROR: RPC did not become ready"
+      tail -n 100 "$NODE_LOG" || true
+      exit 1
+    fi
+    restarts=$((restarts + 1))
+    if [ "$restarts" -gt "$max" ]; then
+      log "ERROR: node exited before RPC was ready (after ${max} restarts)"
+      tail -n 100 "$NODE_LOG" || true
+      exit 1
+    fi
+    log "WARN: node exited before RPC was ready; restart ${restarts}/${max}"
+    start_node
+  done
+}
+
+ensure_node_up() {
+  if node_alive \
+    && curl -sf -X POST "$RPC_URL" -H 'Content-Type: application/json' \
+      -d '{"jsonrpc":"2.0","method":"rpc.discover","id":1}' >/dev/null 2>&1; then
+    return 0
+  fi
+  log "WARN: node unhealthy; restarting"
+  stop_node
+  start_node
+  ensure_rpc
+}
+
+# ── 1. Sui client config + import predefined accounts ────────────────────────
+log "Initialising Sui client config at $SUI_CFG"
+mkdir -p "$SUI_CFG"
+printf '%s' '[]' > "$KEYSTORE"
+cat > "$CLIENT_YAML" <<EOF
 ---
 keystore:
   File: $KEYSTORE
 envs:
   - alias: localnet
-    rpc: "http://127.0.0.1:9000"
+    rpc: "$RPC_URL"
   - alias: testnet
-    rpc: "https://fullnode.testnet.sui.io"
+    rpc: "https://fullnode.testnet.sui.io:443"
 active_env: localnet
 active_address: ~
 EOF
 
-  printf 'y\n' | sui client switch --env localnet 2>/dev/null || true
+log "Importing predefined accounts from $ACCOUNTS_JSON..."
+declare -A ADDR
+declare -A PRIVKEY
+while IFS=$'\t' read -r alias key expected; do
+  sui keytool import "$key" "$KEY_SCHEME" --alias "$alias" >/dev/null 2>&1 \
+    || { log "ERROR: failed to import $alias"; exit 1; }
+  ADDR[$alias]="$(sui keytool export --key-identity "$alias" --json | jq -r '.key.suiAddress')"
+  PRIVKEY[$alias]="$key"
+  # The committed address is what downstream reads out of accounts.json, so a
+  # key/address mismatch must fail the bake rather than ship a misleading file.
+  if [ "${ADDR[$alias]}" != "$expected" ]; then
+    log "ERROR: $alias key derives ${ADDR[$alias]}, but accounts.json says $expected"; exit 1
+  fi
+  log "  $alias -> ${ADDR[$alias]}"
+done < <(jq -r '.accounts | to_entries[] | [.key, .value.privateKey, .value.address] | @tsv' "$ACCOUNTS_JSON")
 
-  echo "[ci] Importing keypairs from $ACCOUNTS_JSON..."
-  while IFS= read -r key; do
-    alias="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"
-    pk="$(jq -r --arg k "$key" '.accounts[$k].privateKey' "$ACCOUNTS_JSON")"
-    if [ -z "$pk" ] || [ "$pk" = "null" ]; then
-      echo "[ci] ERROR: no privateKey for '$key' in $ACCOUNTS_JSON" >&2; exit 1
-    fi
-    sui keytool import "$pk" ed25519 --alias "$alias" \
-      || { echo "[ci] ERROR: failed to import $alias" >&2; exit 1; }
-  done < <(jq -r '.accounts | keys[]' "$ACCOUNTS_JSON")
-  touch "$INIT_MARKER"
-  echo "[ci] Keys imported."
+sui client switch --address "${ADDR[ADMIN]}" >/dev/null
+export WORLD_ADMIN_ADDRESS="${ADDR[ADMIN]}"
+export SPONSOR_ADDRESSES="${ADDR[SPONSOR]}"
+export SUI_PRIVATE_KEY="${PRIVKEY[ADMIN]}"
+
+# ── 2. Deterministic genesis ─────────────────────────────────────────────────
+GAS_PER_COIN="${GENESIS_GAS_PER_COIN:-30000000000000000}"
+GAS_RESERVE="${GENESIS_GAS_RESERVE:-$GAS_PER_COIN}"
+TOTAL_FUNDING=$((GAS_PER_COIN * 3))
+ADDRESS_BALANCE_AMOUNT=$((TOTAL_FUNDING - GAS_RESERVE))
+GENESIS_RUNTIME_CONFIG="/tmp/genesis-config.runtime.yaml"
+mkdir -p "$DATA_DIR"
+{
+  cat "$GENESIS_CONFIG"
+  echo "accounts:"
+  while IFS= read -r alias; do
+    printf '  - address: "%s"\n    gas_amounts: [%s]\n' \
+      "${ADDR[$alias]}" "$TOTAL_FUNDING"
+  done < <(jq -r '.accounts | keys_unsorted[]' "$ACCOUNTS_JSON")
+} > "$GENESIS_RUNTIME_CONFIG"
+
+# Snapshot mode needs short epochs so we can reach epoch >= 1 before sealing.
+if [ "$MODE" = "snapshot" ]; then
+  sed -i 's/^\([[:space:]]*\)epoch_duration_ms: .*/\1epoch_duration_ms: 30000/' "$GENESIS_RUNTIME_CONFIG"
+  log "Snapshot mode: epoch_duration_ms overridden to 30000"
 fi
 
-# ---------- start local node ----------
-echo "[ci] Creating data directory..."
-mkdir -p /data/sui-localnet
+log "Generating genesis from $GENESIS_RUNTIME_CONFIG (funding ${#ADDR[@]} accounts)"
+sui genesis --from-config "$GENESIS_RUNTIME_CONFIG" --working-dir "$DATA_DIR" --with-faucet -f
+# Genesis writes its own fullnode.yaml; overwriting it breaks faucet tx execution.
 
-echo "[ci] Running sui genesis..."
-sui genesis --working-dir /data/sui-localnet --with-faucet
+# ── 3. Start node ────────────────────────────────────────────────────────────
+NODE_LOG="$DATA_DIR/node.log"
+: >"$NODE_LOG"
+START_ARGS=(--network.config "$DATA_DIR")
+if [ "$MODE" != "test" ]; then
+  START_ARGS+=(--with-faucet)
+fi
+start_node
+ensure_rpc
 
-# Genesis writes fullnode.yaml; overwriting it breaks faucet tx execution on Sui 1.75.
-
-echo "[ci] Starting local Sui node..."
-sui start --network.config /data/sui-localnet --with-faucet &
-NODE_PID=$!
-trap 'kill "$NODE_PID" 2>/dev/null || true' EXIT
-
-echo "[ci] Waiting for Sui on port 9000..."
-for i in $(seq 1 30); do
-  timeout 5 sui client --client.config "$CLIENT_YAML" --client.env localnet \
-    chain-identifier --format hex > /dev/null 2>&1 && break
-  if [ "$i" -eq 30 ]; then
-    echo "[ci] ERROR: Sui did not become ready" >&2
-    kill "$NODE_PID" 2>/dev/null || true
+# ── 3.5 Move surplus funds into address balance ──────────────────────────────
+log "Moving surplus into address balance for ${#ADDR[@]} accounts (keeping $GAS_RESERVE MIST as owned gas each)..."
+for alias in "${!ADDR[@]}"; do
+  ensure_node_up
+  sui client switch --address "${ADDR[$alias]}" >/dev/null
+  sent=0
+  for attempt in 1 2 3; do
+    if sui client send-funds --to "${ADDR[$alias]}" --amount "$ADDRESS_BALANCE_AMOUNT" --gas-budget 100000000; then
+      sent=1
+      break
+    fi
+    log "WARN: send-funds failed for $alias (attempt $attempt/3); retrying in 3s..."
+    ensure_node_up
+    sleep 3
+  done
+  if [ "$sent" -ne 1 ]; then
+    log "ERROR: send-funds failed for $alias after 3 attempts"
+    tail -n 100 "$NODE_LOG" || true
     exit 1
   fi
-  sleep 1
 done
-sleep 2
-echo "[ci] Sui ready."
+sui client switch --address "${ADDR[ADMIN]}" >/dev/null
 
-# ---------- fund accounts ----------
-printf 'y\n' | sui client switch --env localnet 2>/dev/null || true
+# ── 4. Install deps, deploy world, seed ──────────────────────────────────────
+cd /app
+export CI="${CI:-true}"
+# The repo is bind-mounted from the host: ignore its .env files so a developer's
+# network settings and keys never reach this localnet run.
+export WORLD_IGNORE_DOTENV=1 DOTENV_CONFIG_PATH=/dev/null
 
-# One faucet grant for the given alias, with retries.
-faucet_once() {
-  local alias="$1"
-  sui client switch --address "$alias" >/dev/null
-  for attempt in 1 2 3; do
-    sui client faucet 2>&1 && return 0
-    [ "$attempt" -eq 3 ] && { echo "[ci] Faucet failed for $alias" >&2; return 1; }
-    sleep 2
-  done
-}
+log "pnpm install..."
+pnpm_install_args=(--frozen-lockfile)
+[ -n "${PNPM_STORE_DIR:-}" ] && pnpm_install_args+=(--store-dir "$PNPM_STORE_DIR")
+pnpm install "${pnpm_install_args[@]}"
 
-FAUCET_GRANTS="${FAUCET_GRANTS:-5}"
-SPONSOR_FAUCET_GRANTS="${SPONSOR_FAUCET_GRANTS:-50}"
-echo "[ci] Funding GOVERNOR, ADMIN, PLAYER, PLAYER_B from faucet ($FAUCET_GRANTS grants each)..."
-for alias in GOVERNOR ADMIN PLAYER PLAYER_B; do
-  for _ in $(seq 1 "$FAUCET_GRANTS"); do
-    faucet_once "$alias" || exit 1
-    sleep 1
-  done
-done
+log "Cleaning stale Move build artifacts..."
+rm -rf contracts/*/build
 
-echo "[ci] Funding SPONSOR from faucet ($SPONSOR_FAUCET_GRANTS grants)..."
-for _ in $(seq 1 "$SPONSOR_FAUCET_GRANTS"); do
-  faucet_once SPONSOR || exit 1
-  sleep 1
-done
+log "Cleaning stale localnet deploy artifacts..."
+rm -rf deployments/localnet
 
-sui client switch --address SPONSOR >/dev/null
-SPONSOR_ADDRESS="$(sui client active-address)"
-# Pick one gas coin to deposit whole into the address balance.
-SPONSOR_COIN="$(sui client gas --json 2>/dev/null | jq -r '.[0].gasCoinId // .[0].id // empty')"
-if [ -n "$SPONSOR_COIN" ]; then
-  echo "[ci] Depositing coin $SPONSOR_COIN into SPONSOR address balance..."
-  sui client call \
-    --package 0x2 --module coin --function send_funds \
-    --type-args 0x2::sui::SUI \
-    --args "$SPONSOR_COIN" "$SPONSOR_ADDRESS" \
-    --gas-budget 100000000 \
-    || echo "[ci] WARN: send_funds failed; sponsor still has its coin balance" >&2
-else
-  echo "[ci] WARN: no sponsor coin found; skipping address-balance deposit" >&2
-fi
+ensure_node_up
+log "Deploying world to localnet..."
+./scripts/deploy-world.sh localnet
 
-sui client switch --address ADMIN
+log "Deploying currency to localnet..."
+./scripts/deploy-currency.sh localnet
 
-# ---------- export keys and generate /app/.env ----------
-get_address() { sui keytool export --key-identity "$1" --json 2>/dev/null | jq -r '.key.suiAddress'; }
-get_key()     { sui keytool export --key-identity "$1" --json 2>/dev/null | jq -r '.exportedPrivateKey'; }
+log "Seeding world ..."
+./scripts/seed-world.sh localnet
 
-require_val() {
-  if [ -z "$2" ] || [ "$2" = "null" ]; then
-    echo "[ci] ERROR: failed to export $1" >&2; exit 1
+fund_exchange_eve() {
+  if [ -z "${ADDR[EXCHANGE]:-}" ]; then
+    log "ERROR: EXCHANGE account missing from accounts.json"
+    exit 1
   fi
+  local amount="${EXCHANGE_EVE_AMOUNT:-10000000}"
+  log "Transferring ${amount} EVE to EXCHANGE (${ADDR[EXCHANGE]})..."
+  ENV=localnet RECIPIENT="${ADDR[EXCHANGE]}" AMOUNT="$amount" \
+    pnpm --filter @evefrontier/world-sdk transfer:eve
 }
 
-GOVERNOR_ADDRESS=$(get_address GOVERNOR)
-ADMIN_ADDRESS=$(get_address ADMIN)
-SPONSOR_ADDRESS=$(get_address SPONSOR)
-PLAYER_ADDRESS=$(get_address PLAYER)
-PLAYER_B_ADDRESS=$(get_address PLAYER_B)
-GOVERNOR_PRIVATE_KEY=$(get_key GOVERNOR)
-ADMIN_PRIVATE_KEY=$(get_key ADMIN)
-SPONSOR_PRIVATE_KEY=$(get_key SPONSOR)
-PLAYER_PRIVATE_KEY=$(get_key PLAYER)
-PLAYER_B_PRIVATE_KEY=$(get_key PLAYER_B)
-
-for var in GOVERNOR_ADDRESS ADMIN_ADDRESS SPONSOR_ADDRESS PLAYER_ADDRESS PLAYER_B_ADDRESS \
-           GOVERNOR_PRIVATE_KEY ADMIN_PRIVATE_KEY SPONSOR_PRIVATE_KEY PLAYER_PRIVATE_KEY PLAYER_B_PRIVATE_KEY; do
-  require_val "$var" "${!var}"
-done
-
-if [ -f "$APP_ENV_EXAMPLE" ]; then
-  echo "[ci] Generating .env from env.example..."
-  sed -e 's/\r$//' "$APP_ENV_EXAMPLE" | \
-  sed -e "s|^SUI_NETWORK=.*|SUI_NETWORK=localnet|" \
-      -e "s|^ADMIN_ADDRESS=.*|ADMIN_ADDRESS=$ADMIN_ADDRESS|" \
-      -e "s|^SPONSOR_ADDRESSES=.*|SPONSOR_ADDRESSES=$ADMIN_ADDRESS,$SPONSOR_ADDRESS|" \
-      -e "s|^GOVERNOR_PRIVATE_KEY=.*|GOVERNOR_PRIVATE_KEY=$GOVERNOR_PRIVATE_KEY|" \
-      -e "s|^ADMIN_PRIVATE_KEY=.*|ADMIN_PRIVATE_KEY=$ADMIN_PRIVATE_KEY|" \
-      -e "s|^PLAYER_A_PRIVATE_KEY=.*|PLAYER_A_PRIVATE_KEY=$PLAYER_PRIVATE_KEY|" \
-      -e "s|^PLAYER_B_PRIVATE_KEY=.*|PLAYER_B_PRIVATE_KEY=$PLAYER_B_PRIVATE_KEY|" \
-  > "$APP_ENV"
-  echo "[ci] .env written."
-else
-  echo "[ci] WARN: env.example not found, skipping .env generation" >&2
-fi
-
-if [ $# -eq 1 ]; then
-  echo "[ci] Localnet ready. Deploying and configuring world..."
-
-  cd /app
-  export CI="${CI:-true}"
-
-  echo "[ci] Switching to GOVERNOR for deployment..."
-  sui client switch --address GOVERNOR >/dev/null
-
-  pnpm install --frozen-lockfile
-  pnpm deploy-world localnet
-  pnpm run configure-world localnet
-
-  echo "[ci] Switching to ADMIN for builder deployment..."
-  sui client switch --address ADMIN >/dev/null
-  pnpm deploy-builder-ext localnet
-
-  if [ "$1" = "test" ]; then
-    echo "[ci] Running integration tests..."
-
-    chmod +x ./scripts/run-integration-test.sh
-    DELAY_SECONDS="${DELAY_SECONDS:-3}" ./scripts/run-integration-test.sh
-  elif [ "$1" = "snapshot" ]; then
-    echo "[ci] Building snapshot image..."
-
-    # create-character reads PLAYER_A/PLAYER_B from .env and seeds both characters.
-    echo "[ci] Seeding characters for PLAYER and PLAYER_B..."
-    DELAY_SECONDS="${DELAY_SECONDS:-3}" pnpm create-character \
-      || { echo "[ci] ERROR: failed to seed player character" >&2; exit 1; }
-
-    echo "[ci] Shutting down node..."
-    if kill -0 "$NODE_PID" 2>/dev/null; then
-      # Try graceful shutdown first (SIGTERM), with a bounded wait.
-      echo "[ci] Node process signaled for shutdown..."
-      kill "$NODE_PID" 2>/dev/null || true
-
-      SHUTDOWN_TIMEOUT="${SHUTDOWN_TIMEOUT:-60}"
-      while kill -0 "$NODE_PID" 2>/dev/null && [ "$SHUTDOWN_TIMEOUT" -gt 0 ]; do
-        echo "[ci] Waiting for node to shutdown... $SHUTDOWN_TIMEOUT seconds remaining"
-
-        sleep 1
-        SHUTDOWN_TIMEOUT=$((SHUTDOWN_TIMEOUT - 1))
-      done
-
-      if kill -0 "$NODE_PID" 2>/dev/null; then
-        echo "[ci] Node did not exit gracefully, forcing termination..."
-        kill -9 "$NODE_PID" 2>/dev/null || true
-      fi
-
-      # Ensure the process is fully reaped before proceeding.
-      echo "[ci] Making sure the node process is fully reaped..."
-      wait "$NODE_PID" 2>/dev/null || true
-    else
-      echo "[ci] Node process not running; skipping shutdown wait."
-    fi
-
-    echo "[ci] Replacing entrypoint with snapshot image entrypoint..."
+# ── 5. Mode dispatch ─────────────────────────────────────────────────────────
+case "$MODE" in
+  test)
+    log "Running integration tests..."
+    ./scripts/run-integration-test.sh
+    log "Integration tests passed."
+    ;;
+  snapshot)
+    fund_exchange_eve
+    wait_for_epoch 1
+    log "Baking snapshot: stopping node cleanly..."
+    stop_node final
+    log "Staging world.json + accounts.json + test-resources.json for runtime host seeding..."
+    mkdir -p "$STAGE_DIR"
+    cp deployments/localnet/world.json "$STAGE_DIR/world.json"
+    cp "$ACCOUNTS_JSON" "$STAGE_DIR/accounts.json"
+    cp test-resources.json "$STAGE_DIR/test-resources.json"
+    log "Swapping in the snapshot-image entrypoint..."
     mv /entrypoint-snapshot-image.sh /entrypoint.sh
-    chmod a+x /entrypoint.sh
-
-    # Unmounted copies used at runtime to seed an empty host bind mount at /data/deployment.
-    echo "[ci] Copying extracted object ids to /opt/world-contracts/extracted-object-ids.json..."
-    mkdir -p /opt/world-contracts
-    cp deployments/localnet/extracted-object-ids.json /opt/world-contracts/extracted-object-ids.json
-
-    echo "[ci] Copying accounts to /opt/world-contracts/accounts.json..."
-    cp "$ACCOUNTS_JSON" /opt/world-contracts/accounts.json
-  fi
-else
-  echo "[ci] Localnet ready. Running command..."
-  exec "$@"
-fi
+    chmod +x /entrypoint.sh
+    log "Snapshot baked. The container is now ready to be committed."
+    ;;
+  "")
+    fund_exchange_eve
+    log "Localnet ready at $RPC_URL with the world deployed. Leaving node running."
+    wait "$NODE_PID"
+    ;;
+  *)
+    log "ERROR: unknown mode '$MODE' (expected: test | snapshot | <empty>)"
+    exit 1
+    ;;
+esac

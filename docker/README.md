@@ -1,87 +1,80 @@
-# Snapshot image (local Sui + contracts)
+# Docker
 
-Pre-built Docker image with a Sui **localnet**, the deployed base **world**, five first-party feature packages, the optional **builder** package, and (with Postgres) indexer and GraphQL. Use it to run integration tests against a fixed chain from your laptop or CI.
+Two Dockerfiles. One pinned toolchain: `SUI_VERSION=testnet-v1.78.0` (plus
+`PNPM_VERSION=12.10.1`), declared as build `ARG`s in each Dockerfile. To bump, update
+together: both Dockerfiles, this README, and `genesis/genesis-config.yaml`'s
+`protocol_version` (which must match the Sui version). The CI workflows build
+these Dockerfiles, so they inherit the pin automatically — there is no tag to
+edit in `pr.yml`.
 
-## Run it locally
+| Stage / image | File | Used by |
+|---------------|------|---------|
+| **ci-stage** | [`Dockerfile`](Dockerfile) | `pr.yml` — format + lint + test contracts |
+| **test-stage** | [`Dockerfile`](Dockerfile) | `release.yml` — build + test gate before release |
+| **release-stage** | [`Dockerfile`](Dockerfile) | pinned, self-contained artifact that deploys the world to a network |
+| **integration** | [`Dockerfile.integration`](Dockerfile.integration) | `pr.yml` — localnet + deploy + run SDK integration tests |
+| **snapshot** | [`Dockerfile.integration`](Dockerfile.integration) | bake the running chain into a downstream image (localnet + indexer + GraphQL) |
 
-See **[`docker-compose-snapshot-image.yml`](docker-compose-snapshot-image.yml)** for a working example: Postgres, the snapshot service, ports, and env vars wired up.
+Every deploy writes `deployments/<network>/world.json` — the manifest (chainId,
+package ids, shared objects) the SDK and downstream read.
 
-From the repo root:
+The localnet uses a [deterministic genesis](genesis/): accounts in
+[`genesis/accounts.json`](genesis/accounts.json) (`ADMIN`, `SPONSOR`,
+`PLAYER_A/B/C`, `EXCHANGE`) funded at genesis (owned gas + address balance),
+identical every run. After currency deploy the deployer EVE allocation (10M) is
+transferred to `EXCHANGE` for snapshot / economy downstream. Deploy whitelists
+`SPONSOR` on the AdminACL via `SPONSOR_ADDRESSES`.
 
-```bash
-docker compose -f docker/docker-compose-snapshot-image.yml up
-```
-
-The compose file defaults to the published **`latest-snapshot`** tag (`ghcr.io/evefrontier/world-contracts:latest-snapshot`). Change `image:` if you want another tag from GHCR (see below).
-
-## Where to get the image
-
-Images are on **GitHub Container Registry**:
-
-`ghcr.io/evefrontier/world-contracts:<tag>-snapshot`
-
-Tags line up with releases (e.g. version numbers, `latest`). Check this repo’s **Packages** on GitHub for what’s available.
-
-These images are published as **multi-arch manifests** (`linux/amd64` + `linux/arm64`), so Docker automatically pulls the variant matching your machine. On **Apple Silicon** that means a native `arm64` image — drop any `DOCKER_DEFAULT_PLATFORM=linux/amd64` override or `--platform linux/amd64` flag, which would otherwise force the slower emulated amd64 image.
-
-## Object IDs on your machine (`extracted-object-ids.json`)
-
-Tests need the **package and object IDs** that exist on this chain. The image ships that list as JSON.
-
-**How it gets onto the host**
-
-The compose file mounts a host folder onto `/data/deployment` in the container. A bind mount starts out empty on your machine, which would hide the file that’s baked into the image. On container start, the entrypoint **copies** the baked JSON from `/opt/world-contracts/extracted-object-ids.json` into `/data/deployment/extracted-object-ids.json`, overwriting any existing file. That write goes through the mount, so you end up with a real file on the host:
-
-`deployments/localnet-snapshot/extracted-object-ids.json` (relative to the repo when you use the paths in the compose file).
-
-**What’s in the file**
-
-Small JSON with a `network` name and these groups of IDs:
-
-- **`world`** — the published world package id and important shared objects (governor cap, registries, config objects, etc.).
-- **`features`** — the NPC, assembly-access, catapult, Smart Industry, and transponder package and registry IDs.
-- **`builder`** — when present, the builder extension package id and related caps/config ids.
-
-Your services or tests read these hex IDs when calling the chain (e.g. which package to target, which objects to pass into transactions).
-
-The integration deployment also writes `deployments/localnet/world-features.v1.json`,
-the versioned capability manifest used by EveJS. Historical `npc-deployment.json`
-is a migration input. The snapshot export
-currently copies `extracted-object-ids.json`; consumers that need stable feature
-type origins and base-world bindings should retain or construct the combined
-manifest as part of their test fixture. See
-[Package topology and deployment identity](../docs/package-topology.md).
-
-## Accounts and keys on your machine (`accounts.json`)
-
-Builders and service tests need to **act as** the accounts that exist on the baked chain, so the image also ships their private keys and addresses. Like the object IDs, this file is baked into the image and copied onto the host on container start:
-
-`deployments/localnet-snapshot/accounts.json`
-
-> ⚠️ **Test keys only.** These private keys are committed and public on purpose. They exist solely to drive the local snapshot chain. **Never** use these accounts on a real/public network or fund them with real assets.
-
-Four **distinct** roles (`sponsor` is deliberately different from `governor`, `admin`, and the players):
-
-- **`governor`** — deployed the contracts; owns the `GovernorCap`.
-- **`admin`** — owns the builder `AdminCap`, is the registered server address, and is an admin in the `AdminACL`.
-- **`sponsor`** — has lots of SUI, both a coin balance and an [address balance](https://docs.sui.io/onchain-finance/asset-custody/address-balances/) (EF-17526); added to the `AdminACL`.
-- **`player`** — player A (`PLAYER_A`); owns a character on the baked chain.
-- **`player_b`** — player B (`PLAYER_B`); second player for multi-user scripts and builder extensions.
-
-Each entry has an `address` and a `privateKey` (Sui bech32 `suiprivkey1…`), ready to import with `sui keytool import` or load directly in the TS SDK. The same keys are committed at [`docker/genesis/accounts.json`](genesis/accounts.json).
-
-## Integration image (localnet from scratch)
-
-Build and run the same flow as CI (genesis, deploy, integration tests):
+## Integration tests
 
 ```bash
 docker build -f docker/Dockerfile.integration -t world-integration .
 docker run --rm -v "$(pwd):/app" -w /app -e CI=true world-integration test
 ```
 
-On macOS, remove `node_modules` before `docker run` if you have run `pnpm install` on the host. The bind mount would otherwise bring Darwin `esbuild` binaries into the Linux container and publish scripts will fail. CI is unaffected (fresh checkout, no host `node_modules`).
+Brings up the localnet, deploys world packages (`core`, `character`, `metadata`, `power`, `inventory`),
+then `currency` (EVE) via a separate deploy script, runs the SDK integration
+suite. Pass no argument instead of `test` to just leave the node running.
+
+## Snapshot image
 
 ```bash
-rm -rf node_modules
-docker run --rm -v "$(pwd):/app" -w /app -e CI=true world-integration test
+docker compose -f docker/docker-compose-snapshot-image.yml up
+```
+
+Runs a pre-baked chain (with Postgres for indexer + GraphQL) without deploying
+anything. `world.json`, `accounts.json`, and `test-resources.json` are copied to
+the host at `deployments/localnet-snapshot/`. Ports: `9000` RPC · `9123` faucet ·
+`9125` GraphQL. Bake one per-arch, then join, with
+[`../scripts/bake-snapshot-image.sh`](../scripts/bake-snapshot-image.sh):
+`bake <amd64|arm64>` builds and pushes that arch's image, `join` combines the
+pushed arches into one multi-arch manifest.
+
+`accounts.json` is [`genesis/accounts.json`](genesis/accounts.json) copied out at
+bake time: the `role`, `address` and bech32 `privateKey` (`suiprivkey1…`, what
+`Ed25519Keypair.fromSecretKey` takes) of every account, so downstream consumers
+can sign as `ADMIN`, `SPONSOR`, players, or read `EXCHANGE`’s EVE balance. These
+private keys are committed on purpose and are therefore public — never use these
+accounts on a real network or fund them with real assets.
+
+Bake also runs [`../scripts/seed-world.sh`](../scripts/seed-world.sh), which
+creates resources  using the fixed ids in [`../test-resources.json`](../test-resources.json)
+(`tenant: "local"`). Those entities live in the baked chain DB. Object ids are deterministic
+```ts
+const config = loadWorldConfig("deployments/localnet-snapshot/world.json");
+deriveObjectId(config, { id: 900000001n, tenant: "local" }); // character
+deriveObjectId(config, { id: 888800006n, tenant: "local" }); // storage unit itemId
+```
+
+`typeId` in `test-resources.json` is seed metadata for consumers (not an
+on-chain create arg). Use the ids from that file.
+
+## Release image
+
+Env-agnostic deploy vehicle: given `SUI_NETWORK` + `DEPLOYER_PRIVATE_KEY` (via
+`.env` or env vars) it deploys the world and writes `world.json`. Logical envs
+(dev/uat/test/live) and MVR are handled by a separate downstream workflow.
+
+```bash
+docker compose -f docker/compose.yml run --rm deploy   # reads ../.env
 ```

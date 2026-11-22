@@ -4,9 +4,10 @@ on:
   push:
     branches:
       - main
+      - dev
     paths:
       - 'tools/error-decoder/**'
-      - 'contracts/world/sources/**'
+      - 'contracts/**/sources/**'
       - '.github/workflows/deploy-decoder.yml'
   workflow_dispatch:
 
@@ -24,9 +25,8 @@ jobs:
       - uses: actions/checkout@v5
       
       - name: Setup pnpm
-        # version is read from the "packageManager" field in package.json
         uses: pnpm/action-setup@v4
-
+      
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -52,9 +52,9 @@ jobs:
           mkdir -p ../../dist/error-decoder
           # Copy all files from dist/
           cp dist/* ../../dist/error-decoder/ 2>/dev/null || true
-          # Ensure error-map.js exists (fallback if compilation failed)
-          if [ ! -f ../../dist/error-decoder/error-map.js ]; then
-            echo 'export const ERROR_MAP = {}; export function getErrorConstantName() { return undefined; }' > ../../dist/error-decoder/error-map.js
+          # Ensure error-map.json exists (fallback if extraction failed)
+          if [ ! -f ../../dist/error-decoder/error-map.json ]; then
+            echo '{}' > ../../dist/error-decoder/error-map.json
           fi
       
       - name: Setup Pages

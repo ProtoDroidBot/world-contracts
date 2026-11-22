@@ -1,19 +1,10 @@
 #!/usr/bin/env bash
-# Docker entrypoint: set up Sui environment, import keys, deploy and configure.
 set -euo pipefail
 
-cd /app
-
-# ── Load .env ────────────────────────────────────────────────────────────────
-if [ -f .env ]; then
-    # Compose mounts this file read-only; strip CRLF while reading it.
-    set -a
-    source <(sed 's/\r$//' .env)
-    set +a
-else
-    echo "Error: .env file not found. Mount it to /app/.env"
-    exit 1
-fi
+# lib.sh lives at /app/scripts/lib.sh (full repo COPY'd to /app). It runs
+# `cd $REPO_ROOT` via setup(), so we don't cd here.
+source /app/scripts/lib.sh
+setup   # cd /app + load .env if present
 
 ENV="${SUI_NETWORK:-localnet}"
 
@@ -31,61 +22,20 @@ echo "  Environment : $ENV"
 echo "  RPC URL     : $RPC_URL"
 echo "======================================"
 
-# ── Initialize Sui client config ─────────────────────────────────────────────
-if [ ! -f "$HOME/.sui/sui_config/client.yaml" ]; then
-    echo "Initializing Sui client configuration..."
-    mkdir -p "$HOME/.sui/sui_config"
-
-    cat > "$HOME/.sui/sui_config/client.yaml" <<EOF
----
-keystore:
-  File: $HOME/.sui/sui_config/sui.keystore
-envs:
-  - alias: $ENV
-    rpc: "$RPC_URL"
-    ws: ~
-    basic_auth: ~
-active_env: $ENV
-active_address: ~
-EOF
-    echo "[]" > "$HOME/.sui/sui_config/sui.keystore"
-    echo "Sui client configured for $ENV"
-else
-    echo "Sui client configuration already exists"
-    if ! sui client envs 2>/dev/null | grep -qw "$ENV"; then
-        sui client new-env --alias "$ENV" --rpc "$RPC_URL" 2>/dev/null || true
-    fi
-fi
-
-sui client switch --env "$ENV"
+# ── Sui client config + active env (env-neutral helpers from lib.sh) ──────────
+sui_init_config "$ENV" "$RPC_URL"
+ensure_client_env "$ENV" "$RPC_URL"
 echo "Active environment: $(sui client active-env)"
 
-# ── Import private keys into keystore ────────────────────────────────────────
-import_key() {
-    local name=$1 key=$2
-    [ -z "$key" ] && return 0
-    echo "Importing $name..." >&2
-    set +e
-    output=$(sui keytool import "$key" ${KEY_SCHEME:-ed25519} 2>&1)
-    rc=$?
-    set -e
-    if [ $rc -ne 0 ] && ! echo "$output" | grep -qi "already exists"; then
-        echo "  Warning: $output" >&2
-        return 1
-    fi
-    echo "$output" | grep -oE '0x[a-fA-F0-9]{64}' | head -n 1
-}
-
-if [ -z "${GOVERNOR_PRIVATE_KEY:-}" ]; then
-    echo "Error: GOVERNOR_PRIVATE_KEY is not set in .env"
+# ── Import deployer key (idempotent; echoes 0x address) ───────────────────────
+if [ -z "${DEPLOYER_PRIVATE_KEY:-}" ]; then
+    echo "Error: DEPLOYER_PRIVATE_KEY is not set (via .env or env var)"
     exit 1
 fi
 
-DEPLOYER_ADDRESS=$(import_key "GOVERNOR_PRIVATE_KEY (deployer)" "$GOVERNOR_PRIVATE_KEY")
-
-
+DEPLOYER_ADDRESS=$(import_key "$DEPLOYER_PRIVATE_KEY")
 if [ -z "$DEPLOYER_ADDRESS" ]; then
-    echo "Error: Could not determine deployer address from GOVERNOR_PRIVATE_KEY"
+    echo "Error: Could not determine deployer address from DEPLOYER_PRIVATE_KEY"
     exit 1
 fi
 
@@ -94,18 +44,16 @@ sui client switch --address "$DEPLOYER_ADDRESS"
 echo ""
 
 # ── Deploy world ─────────────────────────────────────────────────────────────
+# Deploys core + character + metadata + creation + variant + power + inventory + generic_module + killmail to the target network and writes the deployment
+# manifest. MVR publishing is intentionally out of scope here (separate
+# workstream); this image only publishes the packages on-chain.
 echo "======================================"
-echo "  Deploying world contracts..."
-echo "======================================"   
+echo "  Deploying world contracts to $ENV ..."
+echo "======================================"
 ./scripts/deploy-world.sh "$ENV"
 
 echo ""
 echo "======================================"
-echo "  Configuring world..."
-echo "======================================"
-./scripts/configure-world.sh "$ENV"
-
-echo ""
-echo "======================================"
-echo "  Deployment & configuration complete!"
+echo "  Deployment complete."
+echo "  Manifest: deployments/$ENV/world.json"
 echo "======================================"

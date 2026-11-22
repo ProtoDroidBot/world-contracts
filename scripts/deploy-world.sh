@@ -1,40 +1,56 @@
 #!/usr/bin/env bash
-# Deploy world contracts.
-# Usage: ./scripts/deploy-world.sh [localnet|testnet|mainnet|devnet]
+# Deploy the world Move packages (core, then the rest in dependency order) to a deployment env.
+# Currency is separate: ./scripts/deploy-currency.sh
+# Assumes the target node is already running (for localnet, start it separately).
+#
+# Usage: ./scripts/deploy-world.sh [localnet|dev|test|uat|live] [deploy|publish|upgrade]
 source "$(dirname "$0")/lib.sh"
+
+# Packages in dependency order. creation and variant depend on core; power on core and creation;
+# inventory and generic_module on core and power; killmail on core and character.
+PACKAGES=(core character metadata creation variant power inventory generic_module killmail)
 
 setup
 ENV=$(get_env "${1:-}")
-pnpm clean
-rm -rf contracts/*/Pub.*.toml
-mkdir -p "deployments/$ENV"
-start_logging "$ENV" "deploy-world"
+MODE="${2:-publish}"
+NETWORK=$(get_network "$ENV")
+DEPLOY_DIR="deployments/$ENV"
+ensure_deploy_dir "$ENV"
+start_logging "$ENV" "deploy-world ($MODE)"
 
-echo "--- pnpm i ---"
-pnpm i
+# `deploy` (workflow term for a new lineage) is a synonym for `publish`.
+case "$MODE" in
+    deploy|publish) MODE="publish" ;;
+    upgrade) ;;
+    *) echo "Usage: $0 [localnet|dev|test|uat|live] [deploy|publish|upgrade]" >&2; exit 1 ;;
+esac
 
-echo "--- sui client publish ---"
-publish world "deployments/$ENV/world_package.json" "$ENV"
+ensure_client_env "$ENV" "$(get_rpc "$ENV")"
 
-echo "--- publish feature packages ---"
-SHARED_LOCALNET_PUBFILE="../world/Pub.localnet.toml"
-publish world_npc "deployments/$ENV/world_npc_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
-publish world_catapult "deployments/$ENV/world_catapult_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
-publish world_smart_industry "deployments/$ENV/world_smart_industry_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
-publish world_transponder "deployments/$ENV/world_transponder_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
-publish world_assembly_access "deployments/$ENV/world_assembly_access_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
-publish world_action_queue "deployments/$ENV/world_action_queue_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
-publish world_industry_actions "deployments/$ENV/world_industry_actions_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
-publish world_logistics_actions "deployments/$ENV/world_logistics_actions_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
-publish world_infrastructure_actions "deployments/$ENV/world_infrastructure_actions_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
-publish world_automation "deployments/$ENV/world_automation_package.json" "$ENV" "$SHARED_LOCALNET_PUBFILE"
+# localnet test-publishes into a shared ephemeral pubfile; named envs use the
+# committed Published.toml maintained by sui.
+PUBFILE=""
+if [[ "$ENV" == "localnet" ]]; then
+    PUBFILE="$REPO_ROOT/$DEPLOY_DIR/Pub.$ENV.toml"
+    rm -f "$PUBFILE" "$REPO_ROOT"/contracts/*/Pub."$ENV".toml
+fi
 
-echo "--- extract-object-ids ---"
-export SUI_NETWORK="$ENV"
-pnpm exec tsx ts-scripts/utils/extract-object-ids.ts
+echo "Running '$MODE' for [${PACKAGES[*]}] to $ENV (network: $NETWORK) ..."
+for pkg in "${PACKAGES[@]}"; do
+    if [[ "$MODE" == "upgrade" ]]; then
+        upgrade "$pkg" "$ENV" "$DEPLOY_DIR/$pkg.publish.json"
+    else
+        publish "$pkg" "$ENV" "$PUBFILE" "$DEPLOY_DIR/$pkg.publish.json"
+    fi
+done
 
-echo "--- write-world-features ---"
-pnpm exec tsx ts-scripts/utils/write-world-features.ts
+CHAIN_ID=$(sui client chain-identifier)
+pnpm exec tsx ts-scripts/build-manifest.ts "$DEPLOY_DIR" "$ENV" "$CHAIN_ID" "${PACKAGES[@]}"
 
-echo "Deployed world to $ENV. Output: deployments/$ENV/"
-echo "Log: deployments/$ENV/deploy.log"
+# Seed the AdminACL from ADMIN_ADDRESSES / SPONSOR_ADDRESSES in the env
+echo "Configuring admins/sponsors for $ENV ..."
+ENV="$ENV" pnpm --filter @evefrontier/world-sdk configure:admins
+
+echo "Done ('$MODE') world to $ENV."
+echo "  Manifest: $DEPLOY_DIR/world.json"
+echo "  Log:      $DEPLOY_DIR/deploy.log"
