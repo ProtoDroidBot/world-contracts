@@ -51,27 +51,33 @@ For a **pre-baked Sui localnet** Docker image (deployed contracts, Postgres-back
 
 ### Install Dependencies
 ```bash
-npm install
+pnpm install --frozen-lockfile
 ```
 
 ### Build Contracts
 ```bash
-npm run build
+pnpm build
 ```
 
 ### Run Tests
 ```bash
-npm run test
+pnpm test
 ```
 
 ### Deploy Locally
 
-Deploys the Move packages (`core`, then `character`) to a **running** localnet. Start a
-local node first (e.g. `sui start --with-faucet --force-regenesis`) and fund your active
-address from the faucet.
+For the 3712181 EveJS stack, use `./FrontierWorld.ps1 up -Build 3712181` at the
+EveJS repository root.
+It publishes the 0607 SDK packages and the legacy game contracts on the same
+localnet. See [package topology and deployment identity](docs/package-topology.md).
+
+For standalone SDK development, start a local Sui node and fund your active
+address. Publish the modular packages, then publish EVE currency if your tests
+use it.
 
 ```bash
 ./scripts/deploy-world.sh localnet
+./scripts/deploy-currency.sh localnet
 ```
 
 ### Progress on V1 

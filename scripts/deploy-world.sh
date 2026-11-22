@@ -32,7 +32,10 @@ ensure_client_env "$ENV" "$(get_rpc "$ENV")"
 PUBFILE=""
 if [[ "$ENV" == "localnet" ]]; then
     PUBFILE="$REPO_ROOT/$DEPLOY_DIR/Pub.$ENV.toml"
-    rm -f "$PUBFILE" "$REPO_ROOT"/contracts/*/Pub."$ENV".toml
+    rm -f "$PUBFILE"
+    for pkg in "${PACKAGES[@]}"; do
+        rm -f "contracts/$pkg/Pub.$ENV.toml"
+    done
 fi
 
 echo "Running '$MODE' for [${PACKAGES[*]}] to $ENV (network: $NETWORK) ..."
@@ -44,7 +47,7 @@ for pkg in "${PACKAGES[@]}"; do
     fi
 done
 
-CHAIN_ID=$(sui client chain-identifier)
+CHAIN_ID=$(sui client chain-identifier --format hex)
 pnpm exec tsx ts-scripts/build-manifest.ts "$DEPLOY_DIR" "$ENV" "$CHAIN_ID" "${PACKAGES[@]}"
 
 # Seed the AdminACL from ADMIN_ADDRESSES / SPONSOR_ADDRESSES in the env

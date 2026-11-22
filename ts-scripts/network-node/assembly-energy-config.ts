@@ -30,10 +30,16 @@ export function parseAssemblyEnergyManifest(
     if (source.schemaVersion !== 1) {
         throw new Error("Assembly energy configuration has an unsupported schema version");
     }
+    const compatibleBuilds = source.compatibleClientBuilds ?? [];
+    if (!Array.isArray(compatibleBuilds) ||
+        compatibleBuilds.some(build => !Number.isSafeInteger(build) || build <= 0) ||
+        new Set(compatibleBuilds).size !== compatibleBuilds.length) {
+        throw new Error("Assembly energy configuration has invalid compatible client builds");
+    }
     if (
         !Number.isSafeInteger(source.clientBuild) ||
         Number(source.clientBuild) <= 0 ||
-        (expectedBuild !== undefined && source.clientBuild !== expectedBuild)
+        (expectedBuild !== undefined && source.clientBuild !== expectedBuild && !compatibleBuilds.includes(expectedBuild))
     ) {
         throw new Error(
             `Assembly energy configuration does not match client build ${expectedBuild ?? "unknown"}`

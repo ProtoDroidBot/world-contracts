@@ -10,7 +10,7 @@
  *
  * Usage: tsx ts-scripts/build-manifest.ts <deployDir> <env> <chainId> <pkg...>
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse as parseToml } from '@iarna/toml'
 
@@ -170,9 +170,11 @@ function main(): void {
   }
 
   const existingPath = join(deployDir, 'world.json')
-  const existing: Partial<Manifest> = existsSync(existingPath)
+  const prior: Partial<Manifest> = existsSync(existingPath)
     ? (JSON.parse(readFileSync(existingPath, 'utf8')) as Partial<Manifest>)
     : {}
+  const priorChainId = prior.chainId?.match(/^Hex: ([0-9a-f]{8})$/m)?.[1] ?? prior.chainId
+  const existing = env === 'localnet' && priorChainId !== chainId ? {} : prior
 
   const manifest: Manifest = {
     chainId,
@@ -192,7 +194,9 @@ function main(): void {
     }
   }
 
-  writeFileSync(existingPath, `${JSON.stringify(manifest, null, 2)}\n`)
+  const temporaryPath = `${existingPath}.tmp-${process.pid}`
+  writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`)
+  renameSync(temporaryPath, existingPath)
   console.log(`Wrote ${existingPath}`)
 }
 

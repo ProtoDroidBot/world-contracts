@@ -14,12 +14,17 @@ if (!file || !env) {
 }
 if (!existsSync(file)) process.exit(0)
 
-const toml = parseToml(readFileSync(file, 'utf8')) as {
-  published?: Record<string, unknown>
-}
-if (!toml.published?.[env]) process.exit(0)
+const toml = parseToml(readFileSync(file, 'utf8'))
+const published = toml.published
+if (
+  !published ||
+  typeof published !== 'object' ||
+  Array.isArray(published) ||
+  published instanceof Date ||
+  !published[env]
+) process.exit(0)
 
-delete toml.published[env]
-if (Object.keys(toml.published).length === 0) delete toml.published
+delete published[env]
+if (Object.keys(published).length === 0) delete toml.published
 writeFileSync(file, stringifyToml(toml))
 console.log(`Cleared [published.${env}] from ${file}`)

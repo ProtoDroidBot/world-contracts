@@ -10,7 +10,7 @@ setup() {
     cd "$REPO_ROOT"
     if [ -z "${WORLD_IGNORE_DOTENV:-}" ] && [ -f .env ]; then
         set -a
-        source .env
+        source <(sed 's/\r$//' .env)
         set +a
     fi
 }
@@ -123,7 +123,8 @@ _run_pkg_cmd() {
     tmp=$(mktemp)
     tmp_err=$(mktemp)
 
-    (cd "contracts/$pkg" && "$@" --json) > "$tmp" 2> "$tmp_err" || true
+    local rc=0
+    (cd "contracts/$pkg" && "$@" --json) > "$tmp" 2> "$tmp_err" || rc=$?
 
     {
         echo ""
@@ -135,15 +136,14 @@ _run_pkg_cmd() {
         fi
     } >> "${LOG:-deployments/$env/deploy.log}"
 
-    # On dependency/build errors sui prints a plain message to stdout, not JSON.
-    if [[ "$(head -c1 "$tmp")" != "{" ]]; then
+    # Some Sui versions write build output before the JSON when stdout is redirected.
+    if [[ "$rc" != 0 ]] || ! pnpm exec tsx ts-scripts/utils/extract-json.ts "$tmp" > "$out_file"; then
         echo "ERROR: $action '$pkg' failed:" >&2
         cat "$tmp" "$tmp_err" >&2
-        rm -f -- "$tmp" "$tmp_err"
+        rm -f -- "$tmp" "$tmp_err" "$out_file"
         exit 1
     fi
 
-    cp "$tmp" "$out_file"
     rm -f -- "$tmp" "$tmp_err"
     echo "$action $pkg -> $out_file"
 }

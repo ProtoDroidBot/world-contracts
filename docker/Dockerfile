@@ -49,6 +49,7 @@ RUN mkdir -p /home/deployer/.sui/sui_config \
 
 # Copy workspace manifests first for better layer caching, then install with pnpm
 COPY --chown=deployer:deployer package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY --chown=deployer:deployer sdk/world-sdk/package.json sdk/world-sdk/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY --chown=deployer:deployer . .

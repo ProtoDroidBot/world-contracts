@@ -63,10 +63,13 @@ test("deployment setup permits environment-only configuration without .env", { s
 test("Docker entrypoint accepts read-only CRLF env before configuring Sui", { skip: shellUnavailable }, (t) => {
     const dir = fixture(t);
     const source = readFileSync(path.join(root, "docker/entrypoint.sh"), "utf8");
-    const boundary = source.indexOf("# ── Initialize Sui client config");
+    const boundary = source.indexOf('sui_init_config "$ENV" "$RPC_URL"');
     assert.ok(boundary > 0, "exercise the entrypoint's complete env loading and network selection");
-    // Only relocate /app to the fixture. Stop before key imports or deployment.
-    const prelude = source.slice(0, boundary).replace(/^cd \/app$/m, 'cd "$TEST_ENV_DIR"');
+    // Point the entrypoint at the fixture's lib.sh before it creates Sui configuration.
+    const prelude = source.slice(0, boundary).replace(
+        /^source \/app\/scripts\/lib\.sh$/m,
+        'source "$TEST_ENV_DIR/scripts/lib.sh"'
+    );
     const result = run(`${prelude}\n${verifyExports}`, dir);
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.match(result.stdout, /Environment : localnet\n/);

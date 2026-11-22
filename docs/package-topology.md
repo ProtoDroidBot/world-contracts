@@ -1,8 +1,25 @@
 # Package topology and deployment identity
 
-The deployed world is one base package plus ten first-party feature packages. Do not assume that a module name implies the base-world package address. Runtime callers use the feature's configured call-package ID, while object derivation and type checks use its stable type-origin ID.
+EveJS localnet publishes both package families on the same Sui chain. The 3712181 game stack uses the legacy `world` package and ten feature packages for its Smart Assembly and dApp calls. The 0607 SDK uses separately published `core`, `character`, `metadata`, `creation`, `variant`, `power`, `inventory`, `generic_module`, and `killmail` packages. Each family has its own Object Registry, Admin ACL, and package addresses. An object ID derived using one family's registry and key type applies only in that family.
 
-## Current package map
+## Localnet entry points
+
+| Command or artifact | Purpose |
+| --- | --- |
+| `./FrontierWorld.ps1 up -Build 3712181` from EveJS | Deploy both families with efctl, configure the legacy game world, seed test resources, and synchronize EveJS and the dApp. |
+| `pnpm deploy-world localnet` | efctl's publish step on a running localnet. It invokes `scripts/deploy-world.sh` for the 0607 packages, then publishes the legacy game and feature packages. |
+| `pnpm configure-world localnet` and `pnpm create-test-resources localnet` | Configure legacy sponsors, gates, fuel, and energy, then create the legacy test resources. |
+| `deployments/localnet/world.json` and `deployments/localnet/Pub.localnet.toml` | 0607 SDK deployment and Move publication metadata, including package call addresses, type origins, and shared object identities. |
+| `deployments/localnet/extracted-object-ids.json`, `deployments/localnet/world-features.v1.json`, and `contracts/world/Pub.localnet.toml` | Legacy game and feature deployment metadata consumed by EveJS and the Smart Assembly dApp. |
+| `bash scripts/deploy-world.sh localnet` and `bash scripts/deploy-currency.sh localnet` | Publish the modular deployment and, optionally, its EVE currency on a running localnet. |
+
+The combined publish starts a fresh deployment. Existing objects remain on-chain under their original deployment identities. Use chain-specific manifests from the same publication when configuring a consumer.
+
+For builder-scaffold scripts that need the legacy seed IDs, copy `config/legacy-test-resources.json` to the scaffold's `test-resources.json`. The root `test-resources.json` supplies the 0607 SDK's seed IDs.
+
+## Legacy game package map
+
+Runtime callers use a feature's configured call-package ID. Object derivation and type checks use its stable type-origin ID.
 
 | Package directory | Runtime module | Direct local dependencies | Manifest fields |
 | --- | --- | --- | --- |
@@ -28,9 +45,9 @@ Each feature identity has three distinct parts:
 
 The base-world package, Object Registry, and Admin ACL are separate invariants. Replacing those values is a new world, not a feature upgrade.
 
-## Fresh deployment
+## Fresh legacy deployment
 
-`scripts/deploy-world.sh` publishes in dependency order:
+`scripts/efctl-world.sh deploy` publishes the legacy packages in dependency order:
 
 1. `world`;
 2. `world_npc`;
@@ -46,9 +63,9 @@ The base-world package, Object Registry, and Admin ACL are separate invariants. 
 
 It then writes `deployments/<network>/extracted-object-ids.json` and the combined public feature manifest. On a fresh deployment, every feature's call package and type origin are the same newly published feature-package ID.
 
-The feature packages reuse `contracts/world/Pub.<network>.toml` so their local `world` and `world_npc` dependencies resolve to the packages published earlier in the same deployment. This shared publication file is an input/output artifact, not an assertion that the feature modules live in the base package.
+The feature packages share `contracts/world/Pub.localnet.toml` so their local `world` and `world_npc` dependencies resolve to the packages published earlier in the same deployment.
 
-`deploy-world.sh` begins with `pnpm clean` and removes deployment/publication outputs. It is a fresh-publish command. It is not an upgrade command and must not be used when the intent is to preserve an existing world identity.
+Use the upgrade flow below when preserving an existing feature identity.
 
 ## Versioned world-feature manifest
 
@@ -121,7 +138,7 @@ The feature packages also require a compatible base ABI. `world_npc` calls NPC b
 
 ## Synchronization and verification boundary
 
-EveJS `FrontierWorld.ps1 sync` validates the base deployment, base publication metadata, live chain ID, combined manifest schema, canonical addresses, and base-world bindings. It copies only the public manifest fields beside the protected `world.private.json`.
+EveJS `FrontierWorld.ps1 sync` validates deployment metadata against the live chain ID. For build 3712181, it also verifies all nine modular package records and the shared ObjectRegistry, AdminACL, and VariantRegistry types against that chain. The synchronized workspace stores public feature records beside its protected `world.private.json`.
 
 Current synchronization does not query each live feature package for its expected module and does not include the combined manifest or per-feature publish outputs in the private config's deployment hashes. Before activating an upgraded manifest, independently verify:
 
@@ -141,8 +158,7 @@ Use the Sui CLI supplied by the efctl build environment so the CLI and pinned fr
 pnpm install
 pnpm build
 pnpm test
-pnpm test:world-features
-pnpm test:industry
+node --import tsx --test tests/world-features-manifest.test.ts tests/smart-industry.test.ts
 ```
 
 Focused Move suites can be run independently:

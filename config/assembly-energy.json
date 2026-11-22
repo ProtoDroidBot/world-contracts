@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "clientBuild": 3502403,
+  "compatibleClientBuilds": [3712181],
   "assemblies": [
     { "typeID": 77917, "name": "Heavy Storage", "energyRequired": 500 },
     { "typeID": 84955, "name": "Heavy Gate", "energyRequired": 950 },

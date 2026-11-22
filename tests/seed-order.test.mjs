@@ -7,29 +7,24 @@ const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 
 function commandSequence(relativePath) {
   const source = readFileSync(`${repositoryRoot}/${relativePath}`, "utf8");
-  const commands = source.match(/commands=\(\s*([\s\S]*?)\n\)/);
+  const commands = source.match(/commands=\(\s*([\s\S]*?)\n\s*\)/);
 
   assert.ok(commands, `${relativePath} must define a commands array`);
-  return [...commands[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  return commands[1].trim().split(/\s+/);
 }
 
-for (const script of [
-  "scripts/seed-world.sh",
-  "scripts/run-integration-test.sh",
-]) {
-  test(`${script} links Smart Gates before bringing them online`, () => {
-    const commands = commandSequence(script);
-    const create = commands.indexOf("create-gates");
-    const link = commands.indexOf("link-gates");
-    const online = commands.indexOf("online-gates");
+test("efctl links legacy Smart Gates before bringing them online", () => {
+  const commands = commandSequence("scripts/efctl-world.sh");
+  const create = commands.indexOf("gate/create-gates");
+  const link = commands.indexOf("gate/link-gates");
+  const online = commands.indexOf("gate/online");
 
-    assert.notEqual(create, -1);
-    assert.notEqual(link, -1);
-    assert.notEqual(online, -1);
-    assert.ok(create < link, "gates must exist before they are linked");
-    assert.ok(link < online, "gate::link_gates requires both gates to be offline");
-  });
-}
+  assert.notEqual(create, -1);
+  assert.notEqual(link, -1);
+  assert.notEqual(online, -1);
+  assert.ok(create < link, "gates must exist before they are linked");
+  assert.ok(link < online, "gate::link_gates requires both gates to be offline");
+});
 
 test("the gate-link proof is bound to the two gates", () => {
   const source = readFileSync(
