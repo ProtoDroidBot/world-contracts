@@ -45,6 +45,71 @@ fun bag_mint_adds_balance() {
     scenario.end();
 }
 
+#[test, expected_failure(abort_code = item::EInvalidSingleton)]
+fun singleton_cannot_use_a_mass_variant() {
+    let mut scenario = ts::begin(@0xA);
+    let mut bag = item::new_bag(scenario.ctx());
+    let mut used = 0;
+    item::mint_singleton(&mut bag, 1, fuel_key(), VOL, MASS, source(), COMPONENT, &mut used);
+    abort
+}
+
+#[test, expected_failure(abort_code = item::EItemIdExists)]
+fun singleton_id_cannot_be_duplicated_under_a_different_variant() {
+    let mut scenario = ts::begin(@0xA);
+    let mut bag = item::new_bag(scenario.ctx());
+    let mut used = 0;
+    item::mint_singleton(&mut bag, 1, fuel_key(), VOL, 0, source(), COMPONENT, &mut used);
+    let another_key = variant::new_key(tenant(), FUEL, 1);
+    item::mint_singleton(&mut bag, 1, another_key, VOL, 0, source(), COMPONENT, &mut used);
+    abort
+}
+
+#[test, expected_failure(abort_code = item::EInsufficientQuantity)]
+fun singleton_cannot_be_burned_as_a_variant_stack() {
+    let mut scenario = ts::begin(@0xA);
+    let mut bag = item::new_bag(scenario.ctx());
+    let mut used = 0;
+    let key = fuel_key();
+    item::mint_singleton(&mut bag, 1, key, VOL, 0, source(), COMPONENT, &mut used);
+    item::burn(&mut bag, key, 1, source(), COMPONENT, &mut used);
+    abort
+}
+
+#[test, expected_failure(abort_code = item::EWrongVariant)]
+fun singleton_withdraw_checks_the_full_variant_key() {
+    let mut scenario = ts::begin(@0xA);
+    let mut bag = item::new_bag(scenario.ctx());
+    let mut used = 0;
+    item::mint_singleton(&mut bag, 1, fuel_key(), VOL, 0, source(), COMPONENT, &mut used);
+    let another_key = variant::new_key(tenant(), FUEL, 1);
+    let _item = item::withdraw_singleton(&mut bag, 1, another_key, source(), COMPONENT, &mut used, scenario.ctx());
+    abort
+}
+
+#[test]
+fun drain_batches_keep_singleton_identity_and_stack_volume() {
+    let mut scenario = ts::begin(@0xA);
+    let mut bag = item::new_bag(scenario.ctx());
+    let mut used = 0;
+    let key = fuel_key();
+    item::mint(&mut bag, key, 5, VOL, 0, source(), COMPONENT, &mut used);
+    item::mint_singleton(&mut bag, 901, key, VOL, 0, source(), COMPONENT, &mut used);
+    assert!(bag.balance_count() == 2 && used == 6 * VOL);
+    item::drain_and_destroy(bag, source(), COMPONENT, 2);
+    let batches = event::events_by_type<item::ItemsDestroyed>();
+    assert!(batches.length() == 1);
+    let (_, _, _, entries) = item::items_destroyed_fields(&batches[0]);
+    assert!(entries.length() == 2);
+    assert!(item::destroyed_balance_item_id(&entries[0]).is_none());
+    let (stack_key, stack_quantity, stack_volume) = item::destroyed_balance_fields(&entries[0]);
+    assert!(stack_key == key && stack_quantity == 5 && stack_volume == 5 * VOL);
+    assert!(item::destroyed_balance_item_id(&entries[1]) == option::some(901));
+    let (singleton_key, singleton_quantity, singleton_volume) = item::destroyed_balance_fields(&entries[1]);
+    assert!(singleton_key == key && singleton_quantity == 1 && singleton_volume == VOL);
+    scenario.end();
+}
+
 /// Mint `count` types (ids 1..=count, quantity = id) into a fresh bag, then
 /// drain it at `batch_size`. Returns the batches emitted.
 fun drain_types(count: u64, batch_size: u64): vector<item::ItemsDestroyed> {

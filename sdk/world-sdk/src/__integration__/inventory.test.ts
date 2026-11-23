@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto'
 import { Transaction } from '@mysten/sui/transactions'
+import { fromBase58, toHex } from '@mysten/sui/utils'
 import { describe, expect, it } from 'vitest'
 import {
   addSponsors,
@@ -11,6 +13,8 @@ import {
 } from '../packages/core.js'
 import {
   bridgeInRequirement,
+  bridgeOutRequirement,
+  chainItemToGame,
   createStorageUnit,
   deposit,
   depositRequirement,
@@ -73,6 +77,10 @@ describe('inventory owner round-trip (localnet)', () => {
       ownerRequirement(enableTx, config),
       bridgeInRequirement(enableTx, config, MODULE_ID, {}),
     ])
+    enableAdminAction(enableTx, config, entity, 'bridge_out', [
+      ownerRequirement(enableTx, config),
+      bridgeOutRequirement(enableTx, config, MODULE_ID, {}),
+    ])
     enableAdminAction(enableTx, config, entity, 'withdraw', [
       ownerRequirement(enableTx, config),
       withdrawRequirement(enableTx, config, MODULE_ID, {}),
@@ -98,7 +106,10 @@ describe('inventory owner round-trip (localnet)', () => {
     const tenant = 'inventory-t1'
     const { entityId, capId } = await setupOwnerUnit({ id: 4200n, tenant })
     const itemKey = { tenant, typeId: FUEL, variantId: 0n }
-    const variant = await itemVariant(client, config, { ...itemKey, unitVolume: VOL })
+    const variant = await itemVariant(client, config, {
+      ...itemKey,
+      unitVolume: VOL,
+    })
 
     const runTx = new Transaction()
     addSponsors(runTx, config, [signer])
@@ -137,10 +148,18 @@ describe('inventory owner round-trip (localnet)', () => {
   })
 
   it('bridges in, withdraws, and deposits a singleton on the main inventory', async () => {
-    const tenant = 'inventory-t1'
+    const { chainIdentifier } = await client.core.getChainIdentifier()
+    const liveChainId = /^[0-9a-f]{8}$/i.test(chainIdentifier)
+      ? chainIdentifier.toLowerCase()
+      : toHex(fromBase58(chainIdentifier).subarray(0, 4))
+    expect(liveChainId).toBe(config.chainId)
+    const tenant = `inventory-singleton-${randomUUID()}`
     const { entityId, capId } = await setupOwnerUnit({ id: 4210n, tenant })
     const itemKey = { tenant, typeId: BLUEPRINT, variantId: 0n }
-    const variant = await itemVariant(client, config, { ...itemKey, unitVolume: BLUEPRINT_VOL })
+    const variant = await itemVariant(client, config, {
+      ...itemKey,
+      unitVolume: BLUEPRINT_VOL,
+    })
 
     const runTx = new Transaction()
     addSponsors(runTx, config, [signer])
@@ -168,7 +187,7 @@ describe('inventory owner round-trip (localnet)', () => {
     deposit(runTx, config, e, dReq, item)
     completeRequest(runTx, config, e, dReq)
 
-    await expectSuccess(client, runTx)
+    const roundTrip = await expectSuccess(client, runTx)
 
     const present = await readHasSingleton(client, config, {
       entity: entityId,
@@ -183,5 +202,33 @@ describe('inventory owner round-trip (localnet)', () => {
       key: itemKey,
     })
     expect(asFungible).toBe(0n)
+
+    const burnTx = new Transaction()
+    const burnEntity = burnTx.object(entityId)
+    const burnRequest = interact(burnTx, config, burnEntity, 'bridge_out')
+    verifyOwner(burnTx, config, burnEntity, burnRequest, burnTx.object(capId))
+    chainItemToGame(burnTx, config, burnEntity, burnRequest, {
+      key: itemKey,
+      itemId: BLUEPRINT_ITEM,
+    })
+    completeRequest(burnTx, config, burnEntity, burnRequest)
+    const bridgeOut = await expectSuccess(client, burnTx)
+
+    const remaining = await readHasSingleton(client, config, {
+      entity: entityId,
+      componentId: MODULE_ID,
+      itemId: BLUEPRINT_ITEM,
+    })
+    expect(remaining).toBe(false)
+    console.info(
+      'SDK_SINGLETON_RECEIPT',
+      JSON.stringify({
+        chainId: config.chainId,
+        entityId,
+        variantObjectId: variant,
+        roundTripDigest: roundTrip.digest,
+        bridgeOutDigest: bridgeOut.digest,
+      }),
+    )
   })
 })

@@ -250,6 +250,7 @@ export function hasSingleton(
 export interface BridgeInArgs {
   /** Frozen variant record for the entity's tenant (see `deriveVariantId`). */
   variant: string | TransactionArgument
+  /** Supply a game item ID for a singleton or a quantity in variant base units for a stack. */
   itemId?: bigint | null
   quantity?: bigint | null
 }
@@ -278,6 +279,7 @@ export function gameItemToChain(
 
 export interface ItemAmount {
   key: VariantKeyInput
+  /** Supply a game item ID for a singleton or a quantity in variant base units for a stack. */
   itemId?: bigint | null
   quantity?: bigint | null
 }
@@ -354,7 +356,7 @@ export interface DepositFuelItemArgs {
 
 /**
  * Burn a fuel `Item` into a fuel bay of the entity. The item must come from this
- * entity or one docked at it, and be `variant`. The next requirement must be the
+ * entity or one docked at it and match `variant`. The next requirement must be the
  * grid's `DepositFuel`; the owner's `ownerCap` authorizes it, and the gas sponsor
  * must be on `AdminACL`.
  */
@@ -371,9 +373,9 @@ export function depositFuelItem(
     arguments: [
       entity,
       request,
-      tx.pure.u64(args.fuelBayId),
       args.item,
       typeof args.variant === 'string' ? tx.object(args.variant) : args.variant,
+      tx.pure.u64(args.fuelBayId),
       tx.object.clock(),
     ],
   })

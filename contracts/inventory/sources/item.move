@@ -1,9 +1,9 @@
 /// Stacks are keyed by their NeoType variant, and singletons by game item ID.
 ///
-/// `Item` is a standalone object used in transit. `ItemBag` stores stacks
-/// by `VariantKey`, so they join only when
-/// they are the same variant. Quantities are plain base units (1 item, or 1e-9 kg)
+/// `Item` is a standalone object used in transit. Stacks join only when their
+/// variant keys match. Quantities are plain base units (1 item, or 1e-9 kg),
 /// and carry the variant's `unit_volume` and `decimals` (see `variant::variant`).
+/// The game allocates singleton IDs. This package checks for duplicates per bag.
 ///
 /// Volume is in nano-m³: a stack's volume is `ceil(unit_volume × quantity /
 /// 10^decimals)`, recomputed whenever its quantity changes, so rounding happens
@@ -44,10 +44,8 @@ const GAME_DECIMALS: u8 = 4;
 
 // === Structs ===
 
-/// Standalone item in transit. No `store`: a
-/// withdrawn `Item` can only move via functions this package defines (i.e.
-/// `inventory::deposit`), never by a bare `public_transfer` that would let it
-/// leave the Entity/Requirement system ungated.
+/// Standalone item in transit. The key-only type keeps movement within this
+/// package's functions and their requirements.
 public struct Item has key {
     id: UID,
     item_id: Option<u64>, // singleton game item ID, preserved across moves
@@ -65,10 +63,8 @@ public struct Balance has drop, store {
     decimals: u8,
 }
 
-/// At-rest singleton. Its UID survives withdrawal/deposit without giving the
-/// in-transit Item the `store` ability.
-public struct Singleton has store {
-    id: UID,
+/// At-rest singleton. The enclosing table key is its persistent game item ID.
+public struct Singleton has drop, store {
     key: VariantKey,
     unit_volume: u64,
 }
@@ -80,7 +76,8 @@ public struct ItemBag has store {
 }
 
 // === Events ===
-// `balance_after` and `used_after` are the inventory's state after the movement.
+// `balance_after` is the remaining stack quantity or singleton presence (0/1).
+// `used_after` is the total occupied volume after the movement.
 
 /// Game to chain bridge.
 public struct ItemMinted has copy, drop {
@@ -247,13 +244,9 @@ public(package) fun new_bag(ctx: &mut TxContext): ItemBag {
 
 /// Drop a bag and all its balances without emitting burn events.
 public(package) fun destroy_bag(bag: ItemBag) {
-    let ItemBag { balances, mut singletons } = bag;
+    let ItemBag { balances, singletons } = bag;
     linked_table::drop(balances);
-    while (!singletons.is_empty()) {
-        let (_, Singleton { id, .. }) = singletons.pop_front();
-        id.delete();
-    };
-    singletons.destroy_empty();
+    linked_table::drop(singletons);
 }
 
 /// Mint `quantity` of `key` into `bag` (game-to-chain bridge).
@@ -290,10 +283,9 @@ public(package) fun mint_singleton(
     entity_id: ID,
     component_id: u64,
     used: &mut u64,
-    ctx: &mut TxContext,
 ) {
     assert!(item_id > 0 && decimals == 0, EInvalidSingleton);
-    insert_singleton(bag, item_id, Singleton { id: object::new(ctx), key, unit_volume }, used);
+    insert_singleton(bag, item_id, Singleton { key, unit_volume }, used);
     event::emit(ItemMinted {
         key, item_id: option::some(item_id), quantity: 1, entity_id, component_id,
         balance_after: 1, used_after: *used,
@@ -330,8 +322,7 @@ public(package) fun burn_singleton(
     component_id: u64,
     used: &mut u64,
 ) {
-    let Singleton { id, .. } = remove_singleton(bag, item_id, key, used);
-    id.delete();
+    let _ = remove_singleton(bag, item_id, key, used);
     event::emit(ItemBurned {
         key, item_id: option::some(item_id), quantity: 1, entity_id, component_id,
         balance_after: 0, used_after: *used,
@@ -356,8 +347,7 @@ public(package) fun drain_and_destroy(
             batch.push_back(DestroyedBalance { key, item_id: option::none(), quantity, volume });
         };
         while (!singletons.is_empty() && batch.length() < batch_size) {
-            let (item_id, Singleton { id, key, unit_volume }) = singletons.pop_front();
-            id.delete();
+            let (item_id, Singleton { key, unit_volume }) = singletons.pop_front();
             batch.push_back(DestroyedBalance { key, item_id: option::some(item_id), quantity: 1, volume: unit_volume });
         };
         event::emit(ItemsDestroyed { entity_id, component_id, batch_index, balances: batch });
@@ -455,14 +445,16 @@ public(package) fun withdraw_singleton(
     source: ID,
     component_id: u64,
     used: &mut u64,
+    ctx: &mut TxContext,
 ): Item {
-    let Singleton { id, key, unit_volume } = remove_singleton(bag, item_id, key, used);
+    let Singleton { key, unit_volume } = remove_singleton(bag, item_id, key, used);
     let item_id = option::some(item_id);
+    let item = Item { id: object::new(ctx), item_id, key, quantity: 1, unit_volume, decimals: 0, source };
     event::emit(ItemWithdrawn {
-        key, item_id, quantity: 1, entity_id: source, component_id, transit_id: id.to_inner(),
+        key, item_id, quantity: 1, entity_id: source, component_id, transit_id: object::id(&item),
         balance_after: 0, used_after: *used,
     });
-    Item { id, item_id, key, quantity: 1, unit_volume, decimals: 0, source }
+    item
 }
 
 /// Withdraw `quantities[i]` of `keys[i]` for each `i` as `withdraw` would,
@@ -537,11 +529,11 @@ fun put_item(bag: &mut ItemBag, item: Item, used: &mut u64): MovedBalance {
     let Item { id, item_id, key, quantity, unit_volume, decimals, .. } = item;
     assert!(quantity > 0, EZeroQuantity);
     let transit_id = id.to_inner();
+    id.delete();
     let balance_after = if (item_id.is_some()) {
-        insert_singleton(bag, *item_id.borrow(), Singleton { id, key, unit_volume }, used);
+        insert_singleton(bag, *item_id.borrow(), Singleton { key, unit_volume }, used);
         1
     } else {
-        id.delete();
         add_balance(bag, key, quantity, unit_volume, decimals, used)
     };
     MovedBalance { key, item_id, quantity, transit_id, balance_after, used_after: *used }
@@ -674,6 +666,11 @@ public fun items_destroyed_fields(e: &ItemsDestroyed): (ID, u64, u64, vector<Des
 #[test_only]
 public fun destroyed_balance_fields(b: &DestroyedBalance): (VariantKey, u64, u64) {
     (b.key, b.quantity, b.volume)
+}
+
+#[test_only]
+public fun destroyed_balance_item_id(balance: &DestroyedBalance): Option<u64> {
+    balance.item_id
 }
 
 /// A variant key with the longest tenant `new_key` accepts.
