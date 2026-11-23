@@ -166,12 +166,15 @@ The existing `SUI_NETWORK`, `SUI_RPC_URL`, `WORLD_PACKAGE_ID`, and
 `deployments/<network>/extracted-object-ids.json` select the base world. The CLI
 loads the split Industry package and registry from `features.smartIndustry`;
 the `SMART_INDUSTRY_*` variables may override those fields. Reading and printing
-a transaction plan do not require a signing key.
+a transaction plan do not require a signing key. The CLI reads the LaneState type
+origin from the deployed constructor when building a transaction. When the call
+package and original Industry package differ, offline callers supply the known
+LaneState origin as `IndustryWorld.industryLaneStateTypeOrigin`.
 
 ```bash
-pnpm industry -- read --assembly 0xASSEMBLY_OBJECT_ID
-pnpm industry -- sync --assembly 0xASSEMBLY_OBJECT_ID --snapshot facility.json
-pnpm industry -- sync --assembly 0xASSEMBLY_OBJECT_ID --snapshot facility.json --execute
+npm run industry -- read --assembly 0xASSEMBLY_OBJECT_ID
+npm run industry -- sync --assembly 0xASSEMBLY_OBJECT_ID --snapshot facility.json
+npm run industry -- sync --assembly 0xASSEMBLY_OBJECT_ID --snapshot facility.json --execute
 ```
 
 Only `--execute` submits a transaction and requires `ADMIN_PRIVATE_KEY`. The

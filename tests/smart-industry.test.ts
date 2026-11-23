@@ -10,6 +10,7 @@ import {
     deriveProductionFieldId,
     objectId,
     readIndustry,
+    resolveIndustryLaneStateTypeOrigin,
     type IndustryState,
 } from "../ts-scripts/industry/client";
 import { parseIndustrySnapshot, parseIndustryProduction, parseIndustryLaneStates, u64 } from "../ts-scripts/industry/snapshot";
@@ -144,6 +145,11 @@ test("PTBs call constructors then atomic create or revision-checked sync", () =>
         data.commands.filter((c) => c.$kind === "MoveCall").map((c) => c.MoveCall!.function);
     assert.deepEqual(calls(create), ["new_snapshot", "idle_production", "new_lane_state", "create_with_lane_states"]);
     assert.deepEqual(calls(update), ["new_snapshot", "idle_production", "new_lane_state", "sync_with_lane_states"]);
+    for (const data of [create, update]) {
+        const laneVector = data.commands.at(-2)!.MakeMoveVec!;
+        assert.equal(laneVector.type, `${objectId(world.packageId)}::smart_industry::LaneState`);
+        assert.equal(laneVector.elements.length, 1);
+    }
     assert.throws(
         () => buildIndustryTransaction(world, assemblyId, empty, "1000", previous),
         /newer/
@@ -193,7 +199,7 @@ test("optional gRPC reads require NOT_FOUND confirmation and preserve original e
     await assert.rejects(readIndustry(nativeReader(objects), world, assemblyId), (error) => error === unavailable);
 });
 
-test("upgrades preserve type-origin IDs while using the latest function target", () => {
+test("upgrades preserve snapshot origins and resolve the separately introduced LaneState", async () => {
     const upgraded = { ...world, industryPackageId: "0x222", industryTypeOrigin: "0x111" };
     const firstVersion = { ...world, industryPackageId: "0x111" };
     assert.equal(
@@ -201,8 +207,23 @@ test("upgrades preserve type-origin IDs while using the latest function target",
         deriveIndustryId(firstVersion, assemblyId)
     );
     assert.notEqual(deriveIndustryId(upgraded, assemblyId), deriveIndustryId(world, assemblyId));
+    assert.throws(() => buildIndustryTransaction(upgraded, assemblyId, empty, "1002", null),
+        /LaneState type origin is required/);
+    const laneStateSignature = {
+        reference: null,
+        body: {
+            $kind: "datatype" as const,
+            datatype: { typeName: "0x333::smart_industry::LaneState", typeParameters: [] },
+        },
+    };
+    const abi = { async getMoveFunction(input: SuiClientTypes.GetMoveFunctionOptions) {
+        assert.deepEqual(input, { packageId: objectId("0x222"), moduleName: "smart_industry", name: "new_lane_state" });
+        return { function: { ...input, visibility: "public" as const, isEntry: false,
+            typeParameters: [], parameters: [], returns: [laneStateSignature] } };
+    } };
+    const industryLaneStateTypeOrigin = await resolveIndustryLaneStateTypeOrigin(abi, upgraded.industryPackageId);
     const data = buildIndustryTransaction(
-        upgraded,
+        { ...upgraded, industryLaneStateTypeOrigin },
         assemblyId,
         {
             ...empty,
@@ -224,10 +245,12 @@ test("upgrades preserve type-origin IDs while using the latest function target",
     const vectors = data.commands
         .filter((c) => c.$kind === "MakeMoveVec")
         .map((c) => c.MakeMoveVec!);
-    const typedVectors = vectors.filter((v) => v.type !== null);
-    assert.ok(typedVectors.length > 0);
-    assert.ok(typedVectors.every((v) => v.type?.startsWith(`${objectId("0x111")}::smart_industry::`)));
-    assert.equal(vectors.filter((v) => v.type === null).length, 1);
+    assert.deepEqual(vectors.map((v) => v.type), [
+        ...["ItemStack", "ItemStack", "RecipeSlot", "RecipeSlot"].map((type) => `${objectId("0x111")}::smart_industry::${type}`),
+        `${objectId("0x333")}::smart_industry::LaneState`,
+    ]);
+    laneStateSignature.body.datatype.typeName = "0x333::smart_industry::Snapshot";
+    await assert.rejects(resolveIndustryLaneStateTypeOrigin(abi, upgraded.industryPackageId), /does not return a LaneState/);
 });
 
 test("production builds finite and continuous runs while rejecting inconsistent stopped jobs", () => {
@@ -281,6 +304,10 @@ test("lane-aware PTBs keep distinct blueprints and escrow in the same revision",
     assert.deepEqual(calls, ["new_snapshot", "idle_production", "new_lane_state",
         "new_item_stack", "new_item_stack", "new_recipe_slot", "new_recipe_slot", "new_snapshot",
         "new_production", "new_lane_state", "sync_with_lane_states"]);
+    const vectors = data.commands.filter((c) => c.$kind === "MakeMoveVec").map((c) => c.MakeMoveVec!);
+    assert.ok(vectors.every((vector) => vector.type !== null));
+    assert.equal(vectors.at(-1)?.type, `${objectId(world.packageId)}::smart_industry::LaneState`);
+    assert.equal(vectors.at(-1)?.elements.length, 2);
 });
 
 test("production reads require the sidecar owner and matching inventory revision", async () => {

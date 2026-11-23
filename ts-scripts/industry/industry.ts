@@ -9,6 +9,7 @@ import {
     buildIndustryTransaction,
     deriveIndustryId,
     readIndustry,
+    resolveIndustryLaneStateTypeOrigin,
     type IndustryWorld,
 } from "./client";
 import { parseIndustrySnapshot, parseIndustryProduction, parseIndustryLaneStates, u64 } from "./snapshot";
@@ -91,8 +92,9 @@ async function main() {
     const lanes = document.lanes === undefined ? undefined : parseIndustryLaneStates(document.lanes);
     const snapshot = parseIndustrySnapshot(document.snapshot ?? lanes?.[0]?.snapshot);
     const production = parseIndustryProduction(document.production ?? lanes?.[0]?.production);
+    const industryLaneStateTypeOrigin = await resolveIndustryLaneStateTypeOrigin(client, world.industryPackageId);
     const tx = buildIndustryTransaction(
-        world,
+        { ...world, industryLaneStateTypeOrigin },
         values.assembly,
         snapshot,
         observedAtMs,

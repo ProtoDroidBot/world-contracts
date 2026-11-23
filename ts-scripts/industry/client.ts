@@ -14,6 +14,8 @@ export type IndustryWorld = {
     industryPackageId?: string;
     /** Package that first introduced smart_industry's types. */
     industryTypeOrigin?: string;
+    /** Origin of LaneState, which can differ after a package upgrade. */
+    industryLaneStateTypeOrigin?: string;
 };
 export type IndustryState = {
     objectId: string;
@@ -36,6 +38,25 @@ export function objectId(value: string): string {
     const normalized = normalizeSuiAddress(value);
     if (!isValidSuiObjectId(normalized)) throw new Error("Invalid Sui object ID");
     return normalized;
+}
+
+export async function resolveIndustryLaneStateTypeOrigin(
+    client: Pick<SuiGrpcClient, "getMoveFunction">,
+    packageId: string,
+): Promise<string> {
+    const { function: definition } = await client.getMoveFunction({
+        packageId: objectId(packageId),
+        moduleName: "smart_industry",
+        name: "new_lane_state",
+    });
+    const [result] = definition.returns;
+    const type = result?.body.$kind === "datatype" ? result.body.datatype : null;
+    const origin = type?.typeName.match(/^(0x[0-9a-fA-F]{1,64})::smart_industry::LaneState$/)?.[1];
+    if (definition.returns.length !== 1 || result?.reference !== null || !origin ||
+        type?.typeParameters.length !== 0) {
+        throw new Error("The deployed Smart Industry package does not return a LaneState value");
+    }
+    return objectId(origin);
 }
 
 export function deriveIndustryId(
@@ -287,8 +308,13 @@ export function buildIndustryTransaction(
     }
     if (previous && BigInt(observed) <= BigInt(previous.observedAtMs))
         throw new Error("Observation must be newer than the current snapshot");
-    const target = `${objectId(world.industryPackageId || world.packageId)}::smart_industry`;
-    const typeOrigin = `${objectId(world.industryTypeOrigin || world.industryPackageId || world.packageId)}::smart_industry`;
+    const packageId = objectId(world.industryPackageId || world.packageId);
+    const originalPackageId = objectId(world.industryTypeOrigin || packageId);
+    const laneStateOrigin = world.industryLaneStateTypeOrigin ??
+        (packageId === originalPackageId ? originalPackageId : null);
+    if (laneStateOrigin === null) throw new Error("LaneState type origin is required for an upgraded Smart Industry package");
+    const target = `${packageId}::smart_industry`;
+    const typeOrigin = `${originalPackageId}::smart_industry`;
     const tx = new Transaction();
     const snapshotValue = (current: IndustrySnapshot) => {
       const items = (side: "inputs" | "outputs") =>
@@ -337,13 +363,14 @@ export function buildIndustryTransaction(
         tx.pure.u64(production.requested_runs ?? "0"), tx.pure.u64(production.completed_runs),
         tx.pure.u64(production.run_started_at_ms), tx.pure.u64(production.run_end_at_ms), tx.pure.string(production.stop_reason ?? ""),
     ] }) : tx.moveCall({ target: `${target}::idle_production` });
-    // LaneState may have been introduced in an upgraded package and can have a
-    // different type origin from the older Snapshot structs. This vector is
-    // always non-empty, so inference is both sufficient and upgrade-safe.
-    const laneValues = tx.makeMoveVec({ elements: lanes.map((lane) =>
-        tx.moveCall({ target: `${target}::new_lane_state`, arguments: [
-            tx.pure.u64(lane.lane_id), snapshotValue(lane.snapshot), productionValue(lane.production),
-        ] })[0]) });
+    // Sui requires an explicit element type for non-object values such as LaneState.
+    const laneValues = tx.makeMoveVec({
+        type: `${objectId(laneStateOrigin)}::smart_industry::LaneState`,
+        elements: lanes.map((lane) =>
+            tx.moveCall({ target: `${target}::new_lane_state`, arguments: [
+                tx.pure.u64(lane.lane_id), snapshotValue(lane.snapshot), productionValue(lane.production),
+            ] })[0]),
+    });
     tx.moveCall({
         target: `${target}::${previous ? "sync_with_lane_states" : "create_with_lane_states"}`,
         arguments: [

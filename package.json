@@ -9,6 +9,7 @@
     "deploy-world": "bash scripts/efctl-world.sh deploy",
     "configure-world": "bash scripts/efctl-world.sh configure",
     "create-test-resources": "bash scripts/efctl-world.sh seed",
+    "industry": "tsx ts-scripts/industry/industry.ts",
     "build": "find contracts -maxdepth 1 -mindepth 1 -type d -not -name archive | xargs -P 4 -I {} sui move build --build-env testnet --path {}",
     "lint": "find contracts -maxdepth 1 -mindepth 1 -type d -not -name archive | xargs -P 4 -I {} sui move build --build-env testnet --lint --path {}",
     "test": "find contracts -maxdepth 1 -mindepth 1 -type d -not -name archive | xargs -P 4 -I {} sui move test --build-env testnet --path {}",
