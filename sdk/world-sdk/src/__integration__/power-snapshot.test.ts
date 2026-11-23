@@ -37,8 +37,10 @@ import {
   setGenerator,
   setPowerGrid,
 } from '../packages/power.js'
+import { MASS_UNIT } from '../packages/variant.js'
 import {
   expectSuccess,
+  fuelVariant,
   loadLocalnetWorld,
   mintAccessCap,
   seatShell,
@@ -140,11 +142,13 @@ describe('power snapshot (localnet)', () => {
       [HYDROGEN_BAY, HYDROGEN],
       [CRUDE_BAY, CRUDE],
     ]) {
+      const { amount, ...stats } = FUEL
+      const variant = await fuelVariant(client, config, { tenant: key.tenant, fuelType, ...stats })
       const deposit = interact(onTx, config, entity, 'deposit_fuel')
       depositFuel(onTx, config, entity, deposit, cap, {
         fuelBayId,
-        fuelType,
-        ...FUEL,
+        variant,
+        amount: amount * MASS_UNIT,
       })
       completeRequest(onTx, config, entity, deposit)
     }

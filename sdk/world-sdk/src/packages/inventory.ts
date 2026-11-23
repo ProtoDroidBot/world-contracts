@@ -31,6 +31,8 @@ function pkg(config: WorldConfig): string {
 
 export interface ItemRule {
   typeId?: bigint | null
+  /** Game variant ID; use `0n` for the base variant or omit to allow any. */
+  variantId?: bigint | null
   itemId?: bigint | null
   minQuantity?: bigint | null
   maxQuantity?: bigint | null
@@ -48,6 +50,7 @@ function requirement(
     arguments: [
       tx.pure.u64(componentId),
       tx.pure.option('u64', rule.typeId ?? null),
+      tx.pure.option('u64', rule.variantId ?? null),
       tx.pure.option('u64', rule.itemId ?? null),
       tx.pure.option('u64', rule.minQuantity ?? null),
       tx.pure.option('u64', rule.maxQuantity ?? null),
@@ -200,8 +203,7 @@ export interface BalanceOfArgs {
 }
 
 export interface HasSingletonArgs {
-  moduleId: bigint
-  authorizedId: string
+  componentId: bigint
   itemId: bigint
 }
 
@@ -226,9 +228,8 @@ export function balanceOf(
 }
 
 /**
- * True if `itemId` is stored in the inventory routed to `authorizedId`.
+ * True if `itemId` is stored in the entity's inventory component.
  * Read-only; run under `simulateTransaction` and decode the returned `bool`.
- * False if that inventory does not exist yet.
  */
 export function hasSingleton(
   tx: Transaction,
@@ -240,21 +241,20 @@ export function hasSingleton(
     target: `${pkg(config)}::inventory::has_singleton`,
     arguments: [
       entity,
-      tx.pure.u64(args.moduleId),
-      tx.pure.address(args.authorizedId),
+      tx.pure.u64(args.componentId),
       tx.pure.u64(args.itemId),
     ],
   })
 }
 
 export interface BridgeInArgs {
-  typeId: bigint
+  /** Frozen variant record for the entity's tenant (see `deriveVariantId`). */
+  variant: string | TransactionArgument
   itemId?: bigint | null
   quantity?: bigint | null
-  volume: bigint
 }
 
-/** Game-to-chain bridge: mint into the caller's routed inventory. */
+/** Game-to-chain bridge: mint into the inventory authorized by the request. */
 export function gameItemToChain(
   tx: Transaction,
   config: WorldConfig,
@@ -267,10 +267,9 @@ export function gameItemToChain(
     arguments: [
       entity,
       request,
-      tx.pure.u64(args.typeId),
+      typeof args.variant === 'string' ? tx.object(args.variant) : args.variant,
       tx.pure.option('u64', args.itemId ?? null),
       tx.pure.option('u64', args.quantity ?? null),
-      tx.pure.u64(args.volume),
     ],
   })
   verifySponsor(tx, config, request)
@@ -278,12 +277,12 @@ export function gameItemToChain(
 }
 
 export interface ItemAmount {
-  typeId: bigint
+  key: VariantKeyInput
   itemId?: bigint | null
   quantity?: bigint | null
 }
 
-/** Chain-to-game bridge: burn from the caller's routed inventory. */
+/** Chain-to-game bridge: burn from the inventory authorized by the request. */
 export function chainItemToGame(
   tx: Transaction,
   config: WorldConfig,
@@ -296,7 +295,7 @@ export function chainItemToGame(
     arguments: [
       entity,
       request,
-      tx.pure.u64(args.typeId),
+      variantKey(tx, config, args.key),
       tx.pure.option('u64', args.itemId ?? null),
       tx.pure.option('u64', args.quantity ?? null),
     ],
@@ -323,7 +322,7 @@ export function deposit(
   assertOnline(tx, config, entity, request)
 }
 
-/** Withdraw from the caller's routed inventory as a fresh `Item`. */
+/** Withdraw from the inventory authorized by the request as a fresh `Item`. */
 export function withdraw(
   tx: Transaction,
   config: WorldConfig,
@@ -336,7 +335,7 @@ export function withdraw(
     arguments: [
       entity,
       request,
-      tx.pure.u64(args.typeId),
+      variantKey(tx, config, args.key),
       tx.pure.option('u64', args.itemId ?? null),
       tx.pure.option('u64', args.quantity ?? null),
     ],

@@ -91,21 +91,14 @@ describe('inventory owner round-trip (localnet)', () => {
       MODULE_ID,
     )
 
-    const itemKey = { tenant: key.tenant, typeId: FUEL, variantId: 0n }
-    const variant = await itemVariant(client, config, {
-      tenant: key.tenant,
-      typeId: FUEL,
-      unitVolume: VOL,
-    })
-
     return { entityId, capId }
   }
 
   it('bridges in, withdraws, and deposits back on the main inventory', async () => {
-    const { entityId, capId } = await setupOwnerUnit({
-      id: 4200n,
-      tenant: 'inventory-t1',
-    })
+    const tenant = 'inventory-t1'
+    const { entityId, capId } = await setupOwnerUnit({ id: 4200n, tenant })
+    const itemKey = { tenant, typeId: FUEL, variantId: 0n }
+    const variant = await itemVariant(client, config, { ...itemKey, unitVolume: VOL })
 
     const runTx = new Transaction()
     addSponsors(runTx, config, [signer])
@@ -140,41 +133,38 @@ describe('inventory owner round-trip (localnet)', () => {
       componentId: MODULE_ID,
       key: itemKey,
     })
-    expect(balance).toBe(100n)
+    expect(main).toBe(100n)
   })
 
   it('bridges in, withdraws, and deposits a singleton on the main inventory', async () => {
-    const { entityId, capId } = await setupOwnerUnit({
-      id: 4210n,
-      tenant: 'inventory-t1',
-    })
+    const tenant = 'inventory-t1'
+    const { entityId, capId } = await setupOwnerUnit({ id: 4210n, tenant })
+    const itemKey = { tenant, typeId: BLUEPRINT, variantId: 0n }
+    const variant = await itemVariant(client, config, { ...itemKey, unitVolume: BLUEPRINT_VOL })
 
     const runTx = new Transaction()
+    addSponsors(runTx, config, [signer])
     const e = runTx.object(entityId)
     const c = runTx.object(capId)
 
-    const bridgeReqObj = interact(runTx, config, e, 'bridge_in', [])
-    verifyProximity(runTx, config, bridgeReqObj, [])
-    verifyCaller(runTx, config, bridgeReqObj, c)
+    const bridgeReqObj = interact(runTx, config, e, 'bridge_in')
+    verifyOwner(runTx, config, e, bridgeReqObj, c)
     gameItemToChain(runTx, config, e, bridgeReqObj, {
-      typeId: BLUEPRINT,
+      variant,
       itemId: BLUEPRINT_ITEM,
-      volume: BLUEPRINT_VOL,
     })
     completeRequest(runTx, config, e, bridgeReqObj)
 
-    const wReq = interact(runTx, config, e, 'withdraw', [])
-    verifyProximity(runTx, config, wReq, [])
-    verifyCaller(runTx, config, wReq, c)
+    const wReq = interact(runTx, config, e, 'withdraw')
+    verifyOwner(runTx, config, e, wReq, c)
     const item = withdraw(runTx, config, e, wReq, {
-      typeId: BLUEPRINT,
+      key: itemKey,
       itemId: BLUEPRINT_ITEM,
     })
     completeRequest(runTx, config, e, wReq)
 
-    const dReq = interact(runTx, config, e, 'deposit', [])
-    verifyProximity(runTx, config, dReq, [])
-    verifyCaller(runTx, config, dReq, c)
+    const dReq = interact(runTx, config, e, 'deposit')
+    verifyOwner(runTx, config, e, dReq, c)
     deposit(runTx, config, e, dReq, item)
     completeRequest(runTx, config, e, dReq)
 
@@ -182,17 +172,15 @@ describe('inventory owner round-trip (localnet)', () => {
 
     const present = await readHasSingleton(client, config, {
       entity: entityId,
-      moduleId: MODULE_ID,
-      authorizedId: entityId,
+      componentId: MODULE_ID,
       itemId: BLUEPRINT_ITEM,
     })
     expect(present).toBe(true)
 
     const asFungible = await readBalance(client, config, {
       entity: entityId,
-      moduleId: MODULE_ID,
-      authorizedId: entityId,
-      typeId: BLUEPRINT,
+      componentId: MODULE_ID,
+      key: itemKey,
     })
     expect(asFungible).toBe(0n)
   })

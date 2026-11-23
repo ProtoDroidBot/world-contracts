@@ -1,17 +1,16 @@
 /// Inventory component installed on an `Entity`: a balance area with its own
 /// volume cap. One per entity, created at install.
 ///
-/// - **main** — entity's own id, created at install. Owner-configured actions
-///   grant access to it.
-/// - **ephemeral** — caller's id (`req.authorized_id()`), created on first use.
-///   Items belong to that caller, parked on this entity.
+/// Only the owner can configure actions (`enable_action` is owner-gated), so an
+/// action's requirements are trusted by construction and any caller who
+/// satisfies them may move items through the Inventory. This is how a shared
+/// swap (e.g. deposit X, withdraw Y) runs in one player-signed transaction with
+/// no owner cap at call time, and how a neutral, multi-party interaction is
+/// expressed without a separate per-caller inventory.
 ///
-/// Requirements carry an `ephemeral` flag; the handler routes on it. Ephemeral
-/// also needs `access_cap::caller_requirement()` so the caller is recorded.
-///
-/// At rest in an `ItemBag` (non-singletons by `type_id`, singletons by `item_id`);
-/// in transit as `Item` objects. Bridges mint/burn against the game;
-/// `withdraw`/`deposit` move items out/in.
+/// Items are at-rest as balances in an `ItemBag` and in-transit as `Item`
+/// objects (see `inventory::item`): the two bridges mint/burn balances against
+/// the game, `withdraw`/`deposit` move balances out/in as `Item` objects.
 module inventory::inventory;
 
 use core::{
@@ -42,11 +41,17 @@ const EQuantityBelowMin: vector<u8> = b"Quantity below the required minimum";
 #[error(code = 5)]
 const EQuantityAboveMax: vector<u8> = b"Quantity above the allowed maximum";
 #[error(code = 6)]
-const ENotAuthorized: vector<u8> = b"No caller recorded; action must carry a caller requirement";
+const EWrongTenant: vector<u8> = b"Inventory can only move between entities of the same tenant";
 #[error(code = 7)]
-const EItemIdNotAllowed: vector<u8> = b"Item id not permitted by the requirement";
+const EBatchLengthMismatch: vector<u8> = b"keys and quantities must be the same length";
 #[error(code = 8)]
-const EInvalidItemArgs: vector<u8> = b"Exactly one of item_id or quantity must be set";
+const EEmptyBatch: vector<u8> = b"Batch must not be empty";
+#[error(code = 9)]
+const EWrongVariant: vector<u8> = b"Item is not this variant";
+#[error(code = 10)]
+const EVariantWithoutType: vector<u8> = b"A rule's variant_id needs its type_id";
+#[error(code = 11)]
+const EItemVariantNotAllowed: vector<u8> = b"Item variant not permitted by the requirement";
 
 // === Constants ===
 
@@ -67,24 +72,11 @@ public struct Inventory has store {
     items: ItemBag,
 }
 
-/// Module state installed on the entity. One `Inventory` per owner, keyed by
-/// authorized id: the entity's own id is main (entity-owned, created at
-/// install); any other key is a lazily-created ephemeral (caller-owned)
-/// inventory.
-public struct StorageInventory has store {
-    ephemeral_capacity: u64,
-    // `LinkedTable`: so it can be iterated to burn every inventory
-    // on uninstall.
-    inventories: LinkedTable<ID, Inventory>,
-}
-
 /// Requirement config shared by deposit, withdraw, and bridge handlers.
-/// `ephemeral` selects the target: false = main, true = the caller's ephemeral
-/// inventory. `item_id`, when set, restricts the op to one singleton instance;
-/// non-singleton ops leave it `none`.
+/// `variant_id` narrows `type_id` to one variant; `none` admits every variant.
 public struct ItemRequirement has drop {
     type_id: Option<u64>,
-    item_id: Option<u64>,
+    variant_id: Option<u64>,
     min_quantity: Option<u64>,
     max_quantity: Option<u64>,
 }
@@ -118,7 +110,7 @@ public struct InventoryUninstalled has copy, drop {
 }
 
 /// A fuel `Item` was burned into fuel bay `fuel_bay_id` of `entity_id`. The service
-/// reports it to the game; `grid_fuel::FuelAdded` follows with the bay's values.
+/// reports it to the game; `grid_fuel::FuelAdded`, emitted just before, has the bay's values.
 public struct FuelItemDeposited has copy, drop {
     item_id: ID,
     key: VariantKey,
@@ -140,7 +132,7 @@ public struct InventoryMigrated has copy, drop {
 // === Public Functions ===
 
 /// Build and install the storage component under `component_id` with the
-/// Inventory's volume capacity. `name` is an optional display label and is not
+/// Inventory's volume `capacity` in nano-m³. `name` is an optional display label and is not
 /// unique. The power fields are the spec the Inventory connects to the Creation's
 /// power grid with. Aborts if the grid is not installed.
 public fun install(
@@ -183,128 +175,260 @@ public fun install(
     req
 }
 
-/// Game to chain bridge: mint into the caller's routed inventory (owner to
-/// main, else ephemeral). Non-singleton: `item_id = none`, `quantity = some`.
-/// Singleton: `item_id = some`, `quantity = none` (implicit quantity 1);
-/// aborts if that `item_id` already exists in the target inventory.
+/// Remove the storage component and disconnect it from the power grid. Aborts if it was never
+/// installed. Emits `InventoryUninstalled`, then destroys the Inventory's
+/// balances in `ItemsDestroyed` batches so the game client is notified.
+public fun uninstall(
+    entity: &mut Entity,
+    component_id: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Request {
+    assert!(entity.has_component_with_type<Inventory>(component_id), EComponentMissing);
+
+    let (inv_component, req) = entity.uninstall<Inventory>(
+        component_id,
+        inventory_permit(),
+        ctx,
+    );
+    grid_load::disconnect<Inventory>(entity, component_id, inventory_permit(), clock);
+    let entity_id = entity.id();
+    let Inventory { items, type_id: _, capacity: _, used } = inv_component.unwrap(
+        inventory_permit(),
+    );
+    let balance_count = items.balance_count();
+    event::emit(InventoryUninstalled {
+        entity_id,
+        component_id,
+        used_before: used,
+        balance_count,
+        batch_count: balance_count.div_ceil(EVENT_BATCH_SIZE),
+    });
+    item::drain_and_destroy(items, entity_id, component_id, EVENT_BATCH_SIZE);
+    req
+}
+
+/// Move the Inventory at `component_id` from `from` to `to` with its items, and
+/// its grid connection with it. Nothing is burned. Admin-gated: returns
+/// `from`'s request, then `to`'s.
+public fun migrate(
+    from: &mut Entity,
+    to: &mut Entity,
+    component_id: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (Request, Request) {
+    assert!(from.has_component_with_type<Inventory>(component_id), EComponentMissing);
+    assert!(from.key().tenant() == to.key().tenant(), EWrongTenant);
+    borrow_component(from, component_id);
+    let (inv_component, from_req) = from.uninstall<Inventory>(
+        component_id,
+        inventory_permit(),
+        ctx,
+    );
+    let name = inv_component.name();
+    let inventory = inv_component.unwrap(inventory_permit());
+    let migrated = InventoryMigrated {
+        from_entity_id: from.id(),
+        to_entity_id: to.id(),
+        component_id,
+        inventory_type_id: inventory.type_id,
+        capacity: inventory.capacity,
+        used: inventory.used,
+    };
+    let to_req = to.install(component_id, name, inventory, VERSION, inventory_permit(), ctx);
+    grid_load::migrate<Inventory>(from, to, component_id, inventory_permit(), clock);
+    event::emit(migrated);
+    (from_req, to_req)
+}
+
+/// Game to chain bridge: mint `quantity` (base units of `variant`) into the
+/// entity's Inventory. The variant must be in the entity's tenant. Pushes a
+/// sponsor requirement. The owner can sign. The gas sponsor must be on `AdminACL`.
 public fun game_item_to_chain_inventory(
     entity: &mut Entity,
     req: &mut Request,
-    type_id: u64,
-    item_id: Option<u64>,
-    quantity: Option<u64>,
-    volume: u64, // TODO: volume should be stored in static data module in the future
-    ctx: &mut TxContext,
+    variant: &Variant,
+    quantity: u64,
 ) {
-    let key = entity_key::new(type_id, entity.key().tenant());
-    let (frame, inv_key, storage) = validate_and_route(
-        entity,
-        req,
-        module_permit_bridge_in(),
-        type_id,
-        item_id,
-        quantity,
-    );
-    storage.ensure_inventory(inv_key, ctx);
-    if (item_id.is_some()) {
-        storage.inventory_mut(inv_key).mint_singleton_item(item_id.destroy_some(), key, volume, ctx)
-    } else {
-        storage.inventory_mut(inv_key).mint_item(key, quantity.destroy_some(), volume)
-    };
+    let entity_id = entity.id();
+    let key = variant.key();
+    assert_tenant(entity, key);
+    let (requirement, mut frame, inv) = take(entity, req, bridge_in_permit());
+    let module_id = module_id(&requirement);
+    enforce_rule(&requirement, key, quantity);
+    inv
+        .items
+        .mint(
+            key,
+            quantity,
+            variant.unit_volume(),
+            variant.decimals(),
+            entity_id,
+            module_id,
+            &mut inv.used,
+        );
+    assert!(inv.used <= inv.capacity, EOverCapacity);
+    frame.require(admin_service::sponsor_requirement());
+    frame.require(online_requirement(entity, module_id));
     req.enqueue(frame);
 }
 
-/// Chain to game bridge: burn from the caller's routed inventory. See
-/// `game_item_to_chain_inventory` for the non-singleton/singleton argument convention.
+/// Chain to game bridge: burn `quantity` of `key` from the entity's Inventory.
+/// Pushes a sponsor requirement. The owner can sign. The gas sponsor must be on `AdminACL`.
 public fun chain_item_to_game_inventory(
     entity: &mut Entity,
     req: &mut Request,
-    type_id: u64,
-    item_id: Option<u64>,
-    quantity: Option<u64>,
-    ctx: &mut TxContext,
+    key: VariantKey,
+    quantity: u64,
 ) {
-    let key = entity_key::new(type_id, entity.key().tenant());
-    let (frame, inv_key, storage) = validate_and_route(
-        entity,
-        req,
-        module_permit_bridge_out(),
-        type_id,
-        item_id,
-        quantity,
-    );
-    storage.ensure_inventory(inv_key, ctx);
-    if (item_id.is_some()) {
-        storage.inventory_mut(inv_key).burn_singleton_item(item_id.destroy_some(), key)
-    } else {
-        storage.inventory_mut(inv_key).burn_item(key, type_id, quantity.destroy_some())
-    };
+    let entity_id = entity.id();
+    assert_tenant(entity, key);
+    let (requirement, mut frame, inv) = take(entity, req, bridge_out_permit());
+    let module_id = module_id(&requirement);
+    enforce_rule(&requirement, key, quantity);
+    inv.items.burn(key, quantity, entity_id, module_id, &mut inv.used);
+    frame.require(admin_service::sponsor_requirement());
+    frame.require(online_requirement(entity, module_id));
     req.enqueue(frame);
 }
 
-/// Deposit a standalone `Item` (non-singleton or singleton) into the caller's
-/// routed inventory. A single path for both: `item` already self-describes via
-/// `item::item_id`, so the enforcement it needs is the only thing that branches.
-public fun deposit(entity: &mut Entity, req: &mut Request, item: Item, ctx: &mut TxContext) {
-    let type_id = item.type_id();
-    let tenant = entity.key().tenant();
-    let item_id = item.item_id();
-    let quantity = if (item_id.is_some()) option::none() else option::some(item.quantity());
-    let (frame, inv_key, storage) = validate_and_route(
-        entity,
-        req,
-        module_permit_deposit(),
-        type_id,
-        item_id,
-        quantity,
-    );
-    storage.ensure_inventory(inv_key, ctx);
-    storage.inventory_mut(inv_key).deposit_item(item, tenant);
+/// Deposit a standalone `Item` into the entity's Inventory, joining the stack of
+/// its variant. Aborts unless the item comes from this entity or from a docked
+/// entity, and is in this entity's tenant. Pushes an `OnlineRequirement` for
+/// this inventory's grant. The caller satisfies it with `grid_load::assert_online`.
+public fun deposit(entity: &mut Entity, req: &mut Request, item: Item) {
+    let entity_id = entity.id();
+    entity.assert_docked(item.source());
+    assert_tenant(entity, item.key());
+    let key = item.key();
+    let quantity = item.quantity();
+    let (requirement, mut frame, inv) = take(entity, req, deposit_permit());
+    let module_id = module_id(&requirement);
+    enforce_rule(&requirement, key, quantity);
+    inv.items.deposit(item, entity_id, module_id, &mut inv.used);
+    assert!(inv.used <= inv.capacity, EOverCapacity);
+    frame.require(online_requirement(entity, module_id));
     req.enqueue(frame);
 }
 
-/// Withdraw from the caller's routed inventory as a fresh `Item`. See
-/// `game_item_to_chain_inventory` for the non-singleton/singleton argument convention.
+/// Withdraw `quantity` of `key` from the entity's Inventory as a fresh `Item`.
+/// No docking check: the `Item` can only leave the transaction through `deposit`,
+/// which checks its source. Pushes an `OnlineRequirement` for this
+/// inventory's grant. The caller satisfies it with `grid_load::assert_online`.
 public fun withdraw(
     entity: &mut Entity,
     req: &mut Request,
-    type_id: u64,
-    item_id: Option<u64>,
-    quantity: Option<u64>,
+    key: VariantKey,
+    quantity: u64,
     ctx: &mut TxContext,
 ): Item {
-    let key = entity_key::new(type_id, entity.key().tenant());
-    let (frame, inv_key, storage) = validate_and_route(
-        entity,
-        req,
-        module_permit_withdrawal(),
-        type_id,
-        item_id,
-        quantity,
-    );
-    storage.ensure_inventory(inv_key, ctx);
-    let item = if (item_id.is_some()) {
-        storage.inventory_mut(inv_key).withdraw_singleton_item(item_id.destroy_some(), key)
-    } else {
-        storage.inventory_mut(inv_key).withdraw_item(key, type_id, quantity.destroy_some(), ctx)
-    };
+    let source = entity.id();
+    let (requirement, mut frame, inv) = take(entity, req, withdrawal_permit());
+    let module_id = module_id(&requirement);
+    enforce_rule(&requirement, key, quantity);
+    let item = inv.items.withdraw(key, quantity, source, module_id, &mut inv.used, ctx);
+    frame.require(online_requirement(entity, module_id));
     req.enqueue(frame);
     item
 }
 
-/// Build a bridge-in requirement on module `module_id`. `ephemeral` selects the
-/// target: false = main, true = the caller's ephemeral inventory. `item_id`
-/// pins a specific singleton instance; leave `none` for a non-singleton rule.
+/// `deposit` for every `items` entry under one `Deposit` requirement. Every
+/// entry must be the rule's type and variant, and its quantity bounds apply to the batch's
+/// total, so one requirement never admits more than one `deposit` could. Emits `ItemsDeposited` in batches of at most
+/// `EVENT_BATCH_SIZE`. Aborts if `items` is empty.
+public fun deposit_batch(entity: &mut Entity, req: &mut Request, items: vector<Item>) {
+    assert!(!items.is_empty(), EEmptyBatch);
+    let entity_id = entity.id();
+    let mut total = 0;
+    let mut keys = vector[];
+    items.do_ref!(|item| {
+        entity.assert_docked(item.source());
+        assert_tenant(entity, item.key());
+        total = total + item.quantity();
+        keys.push_back(item.key());
+    });
+    let (requirement, mut frame, inv) = take(entity, req, deposit_permit());
+    let module_id = module_id(&requirement);
+    enforce_batch_rule(&requirement, &keys, total);
+    inv.items.deposit_batch(items, entity_id, module_id, &mut inv.used, EVENT_BATCH_SIZE);
+    assert!(inv.used <= inv.capacity, EOverCapacity);
+    frame.require(online_requirement(entity, module_id));
+    req.enqueue(frame);
+}
+
+/// `withdraw` of `quantities[i]` of `keys[i]` for each `i` under one
+/// `Withdrawal` requirement. Every entry must be the rule's type and variant, and its
+/// quantity bounds apply to the batch's total, so one requirement never
+/// releases more than one `withdraw` could. Returns the
+/// `Item`s in input order and emits `ItemsWithdrawn` in batches of at most
+/// `EVENT_BATCH_SIZE`. Aborts if the vectors are empty or differ in length.
+public fun withdraw_batch(
+    entity: &mut Entity,
+    req: &mut Request,
+    keys: vector<VariantKey>,
+    quantities: vector<u64>,
+    ctx: &mut TxContext,
+): vector<Item> {
+    assert!(keys.length() == quantities.length(), EBatchLengthMismatch);
+    assert!(!keys.is_empty(), EEmptyBatch);
+    let source = entity.id();
+    let (requirement, mut frame, inv) = take(entity, req, withdrawal_permit());
+    let module_id = module_id(&requirement);
+    let mut total = 0;
+    quantities.do_ref!(|q| total = total + *q);
+    enforce_batch_rule(&requirement, &keys, total);
+    let items = inv
+        .items
+        .withdraw_batch(
+            keys,
+            quantities,
+            source,
+            module_id,
+            &mut inv.used,
+            EVENT_BATCH_SIZE,
+            ctx,
+        );
+    frame.require(online_requirement(entity, module_id));
+    req.enqueue(frame);
+    items
+}
+
+/// Burn a fuel `Item` into fuel bay `fuel_bay_id` of the entity. Aborts unless the
+/// item comes from this entity or a docked one, is in this entity's tenant, and is
+/// `variant`. The fuel loads through `grid_fuel::deposit_fuel`: the next requirement
+/// must be the grid's `DepositFuel` (the owner's fuel rules apply), and it requires
+/// the owner and the sponsor, so fuel never enters a bay without the game service.
+public fun deposit_fuel_item(
+    entity: &mut Entity,
+    req: &mut Request,
+    item: Item,
+    variant: &Variant,
+    fuel_bay_id: u64,
+    clock: &Clock,
+) {
+    entity.assert_docked(item.source());
+    assert_tenant(entity, item.key());
+    assert!(item.key() == variant.key(), EWrongVariant);
+    let item_id = object::id(&item);
+    let (key, quantity) = item.burn_item();
+    grid_fuel::deposit_fuel(entity, req, fuel_bay_id, variant, quantity, clock);
+    event::emit(FuelItemDeposited { item_id, key, quantity, entity_id: entity.id(), fuel_bay_id });
+}
+
+/// Build a bridge-in requirement on component `component_id`. `none` allows any
+/// type, variant or amount. `variant_id` needs `type_id`; without it, any
+/// variant of the type passes. Quantities are in the variant's base units.
 public fun bridge_in_requirement(
     component_id: u64,
     type_id: Option<u64>,
-    item_id: Option<u64>,
+    variant_id: Option<u64>,
     min_quantity: Option<u64>,
     max_quantity: Option<u64>,
 ): Requirement {
     requirement::from_config(
-        option::some(module_id),
-        BridgeIn(rule(ephemeral, type_id, item_id, min_quantity, max_quantity)),
+        option::some(component_id),
+        BridgeIn(rule(type_id, variant_id, min_quantity, max_quantity)),
     )
 }
 
@@ -312,13 +436,13 @@ public fun bridge_in_requirement(
 public fun bridge_out_requirement(
     component_id: u64,
     type_id: Option<u64>,
-    item_id: Option<u64>,
+    variant_id: Option<u64>,
     min_quantity: Option<u64>,
     max_quantity: Option<u64>,
 ): Requirement {
     requirement::from_config(
-        option::some(module_id),
-        BridgeOut(rule(ephemeral, type_id, item_id, min_quantity, max_quantity)),
+        option::some(component_id),
+        BridgeOut(rule(type_id, variant_id, min_quantity, max_quantity)),
     )
 }
 
@@ -326,13 +450,13 @@ public fun bridge_out_requirement(
 public fun deposit_requirement(
     component_id: u64,
     type_id: Option<u64>,
-    item_id: Option<u64>,
+    variant_id: Option<u64>,
     min_quantity: Option<u64>,
     max_quantity: Option<u64>,
 ): Requirement {
     requirement::from_config(
-        option::some(module_id),
-        Deposit(rule(ephemeral, type_id, item_id, min_quantity, max_quantity)),
+        option::some(component_id),
+        Deposit(rule(type_id, variant_id, min_quantity, max_quantity)),
     )
 }
 
@@ -340,13 +464,13 @@ public fun deposit_requirement(
 public fun withdraw_requirement(
     component_id: u64,
     type_id: Option<u64>,
-    item_id: Option<u64>,
+    variant_id: Option<u64>,
     min_quantity: Option<u64>,
     max_quantity: Option<u64>,
 ): Requirement {
     requirement::from_config(
-        option::some(module_id),
-        Withdrawal(rule(ephemeral, type_id, item_id, min_quantity, max_quantity)),
+        option::some(component_id),
+        Withdrawal(rule(type_id, variant_id, min_quantity, max_quantity)),
     )
 }
 
@@ -377,14 +501,6 @@ public fun items(inv: &Inventory): &ItemBag {
 /// for clients querying state.
 public fun balance_of(entity: &Entity, component_id: u64, key: VariantKey): u64 {
     inventory(entity, component_id).items.balance(key)
-}
-
-/// True if singleton `item_id` is stored in the inventory routed to
-/// `authorized_id`. False if that inventory does not exist yet.
-public fun has_singleton(entity: &Entity, module_id: u64, authorized_id: ID, item_id: u64): bool {
-    let storage = storage(entity, module_id);
-    if (!storage.has_inventory(authorized_id)) return false;
-    storage.inventory(authorized_id).items.has_singleton(item_id)
 }
 
 // === Private Functions ===
@@ -418,61 +534,37 @@ fun online_requirement(entity: &Entity, module_id: u64): Requirement {
     )
 }
 
-/// Callers `ensure_inventory`,`ctx` cannot be borrowed while
-/// `&mut StorageInventory` is live.
-fun validate_and_route<T: drop>(
-    entity: &mut Entity,
-    req: &mut Request,
-    permit: Permit<T>,
-    type_id: u64,
-    item_id: Option<u64>,
-    quantity: Option<u64>,
-): (Frame, ID, &mut StorageInventory) {
-    let entity_id = entity.id();
-    let caller = req.authorized_id();
-    let (requirement, frame, storage) = take(entity, req, permit);
-    let ephemeral = enforce_rule(&requirement, type_id, item_id, quantity);
-    let inv_key = route_key(caller, entity_id, ephemeral);
-    (frame, inv_key, storage)
-}
-
 fun rule(
     type_id: Option<u64>,
-    item_id: Option<u64>,
+    variant_id: Option<u64>,
     min_quantity: Option<u64>,
     max_quantity: Option<u64>,
 ): ItemRequirement {
-    ItemRequirement { ephemeral, type_id, item_id, min_quantity, max_quantity }
+    // A variant ID only names a variant within its type.
+    assert!(variant_id.is_none() || type_id.is_some(), EVariantWithoutType);
+    ItemRequirement { type_id, variant_id, min_quantity, max_quantity }
 }
 
-/// Decode the `ItemRequirement` config, assert the operation satisfies it, and
-/// return the `ephemeral` target flag. Mirrors field order: ephemeral, type_id,
-/// item_id, min, max. Exactly one of `item_id` (singleton, implicit quantity
-/// 1) or `quantity` (non-singleton) must be set.
-fun enforce_rule(
-    requirement: &Requirement,
-    type_id: u64,
-    item_id: Option<u64>,
-    quantity: Option<u64>,
-): bool {
-    assert!(item_id.is_some() != quantity.is_some(), EInvalidItemArgs);
+/// Decode the `ItemRequirement` config and assert the operation satisfies it.
+fun enforce_rule(requirement: &Requirement, key: VariantKey, quantity: u64) {
+    enforce_batch_rule(requirement, &vector[key], quantity)
+}
+
+/// The rule for everything one requirement moves: each of `keys` must be the
+/// allowed type and variant, and `total` quantity must be within the bounds.
+/// Mirrors field order: type_id, variant_id, min, max.
+fun enforce_batch_rule(requirement: &Requirement, keys: &vector<VariantKey>, total: u64) {
     let mut b = bcs::new(requirement.data());
     let allowed_type = b.peel_option_u64();
-    let allowed_item = b.peel_option_u64();
+    let allowed_variant = b.peel_option_u64();
     let min_quantity = b.peel_option_u64();
     let max_quantity = b.peel_option_u64();
-    allowed_type.do!(|t| assert!(type_id == t, EItemTypeNotAllowed));
-    if (item_id.is_some()) {
-        let id = item_id.destroy_some();
-        allowed_item.do!(|p| assert!(id == p, EItemIdNotAllowed));
-        min_quantity.do!(|m| assert!(1 >= m, EQuantityBelowMin));
-        max_quantity.do!(|m| assert!(1 <= m, EQuantityAboveMax));
-    } else {
-        let q = quantity.destroy_some();
-        min_quantity.do!(|m| assert!(q >= m, EQuantityBelowMin));
-        max_quantity.do!(|m| assert!(q <= m, EQuantityAboveMax));
-    };
-    ephemeral
+    allowed_type.do!(|t| keys.do_ref!(|key| assert!(key.type_id() == t, EItemTypeNotAllowed)));
+    allowed_variant.do!(
+        |v| keys.do_ref!(|key| assert!(key.variant_id() == v, EItemVariantNotAllowed)),
+    );
+    min_quantity.do!(|m| assert!(total >= m, EQuantityBelowMin));
+    max_quantity.do!(|m| assert!(total <= m, EQuantityAboveMax));
 }
 
 /// Abort unless `key` is in the entity's tenant.
@@ -490,93 +582,7 @@ fun inventory_permit(): Permit<Inventory> {
     internal::permit<Inventory>()
 }
 
-/// Mint a balance into an inventory, enforcing its volume capacity.
-fun mint_item(inv: &mut Inventory, game_id: entity_key::EntityKey, quantity: u64, volume: u64) {
-    let added = volume * quantity;
-    assert!(inv.used + added <= inv.capacity, EOverCapacity);
-    inv.used = inv.used + added;
-    inv.items.mint(game_id, quantity, volume);
-}
-
-/// Burn a balance from an inventory, freeing its volume (chain-to-game bridge).
-fun burn_item(inv: &mut Inventory, game_id: entity_key::EntityKey, type_id: u64, quantity: u64) {
-    let volume = inv.items.volume_of(type_id);
-    inv.items.burn(game_id, quantity);
-    inv.used = inv.used - volume * quantity;
-}
-
-/// Deposit an item into an inventory, enforcing its volume capacity.
-fun deposit_item(inv: &mut Inventory, item: Item, tenant: String) {
-    let added = item.volume() * item.quantity();
-    assert!(inv.used + added <= inv.capacity, EOverCapacity);
-    inv.used = inv.used + added;
-    inv.items.deposit(item, tenant);
-}
-
-/// Withdraw a balance from an inventory as a fresh `Item`, freeing its volume.
-fun withdraw_item(
-    inv: &mut Inventory,
-    game_id: entity_key::EntityKey,
-    type_id: u64,
-    quantity: u64,
-    ctx: &mut TxContext,
-): Item {
-    let volume = inv.items.volume_of(type_id);
-    let item = inv.items.withdraw(game_id, quantity, ctx);
-    inv.used = inv.used - volume * quantity;
-    item
-}
-
-/// Mint a singleton into an inventory, enforcing its volume capacity.
-fun mint_singleton_item(
-    inv: &mut Inventory,
-    item_id: u64,
-    game_id: entity_key::EntityKey,
-    volume: u64,
-    ctx: &mut TxContext,
-) {
-    assert!(inv.used + volume <= inv.capacity, EOverCapacity);
-    inv.used = inv.used + volume;
-    inv.items.mint_singleton(item_id, game_id, volume, ctx);
-}
-
-/// Burn a singleton from an inventory, freeing its volume (chain-to-game bridge).
-fun burn_singleton_item(inv: &mut Inventory, item_id: u64, game_id: entity_key::EntityKey) {
-    let volume = inv.items.singleton_volume(item_id);
-    inv.items.burn_singleton(item_id, game_id);
-    inv.used = inv.used - volume;
-}
-
-/// Withdraw a singleton from an inventory as its standalone `Item`, freeing its volume.
-fun withdraw_singleton_item(
-    inv: &mut Inventory,
-    item_id: u64,
-    game_id: entity_key::EntityKey,
-): Item {
-    let volume = inv.items.singleton_volume(item_id);
-    let item = inv.items.withdraw_singleton(item_id, game_id);
-    inv.used = inv.used - volume;
-    item
-}
-
-fun burn_inventory(inv: Inventory, tenant: String) {
-    let Inventory { items, capacity: _, used: _ } = inv;
-    item::burn_all_and_destroy(items, tenant);
-}
-
-fun burn_all_inventories(mut inventories: LinkedTable<ID, Inventory>, tenant: String) {
-    while (!inventories.is_empty()) {
-        let (_, inv) = inventories.pop_front();
-        burn_inventory(inv, tenant);
-    };
-    inventories.destroy_empty();
-}
-
-fun module_permit(): Permit<StorageInventory> {
-    internal::permit<StorageInventory>()
-}
-
-fun module_permit_bridge_in(): Permit<BridgeIn> {
+fun bridge_in_permit(): Permit<BridgeIn> {
     internal::permit<BridgeIn>()
 }
 
