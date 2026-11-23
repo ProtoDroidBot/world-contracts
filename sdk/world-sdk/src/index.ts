@@ -97,6 +97,8 @@ export {
   depositFuelItem,
   depositRequirement,
   gameItemToChain,
+  type HasSingletonArgs,
+  hasSingleton,
   type InstallInventoryArgs,
   type ItemAmount,
   type ItemRule,

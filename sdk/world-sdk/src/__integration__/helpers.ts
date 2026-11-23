@@ -17,14 +17,7 @@ import { loadWorldConfig } from '../config/load.js'
 import type { WorldConfig } from '../config/types.js'
 import { componentIdFromName } from '../packages/component-id.js'
 import { mintAccess } from '../packages/core.js'
-import { balanceOf } from '../packages/inventory.js'
-import { installLayout, setShell } from '../packages/layout.js'
-import {
-  deriveVariantId,
-  type QuantityKind,
-  registerVariant,
-  type VariantKeyInput,
-} from '../packages/variant.js'
+import { balanceOf, hasSingleton } from '../packages/inventory.js'
 
 export const LOCALNET_MANIFEST = fileURLToPath(
   new URL('../../../../deployments/localnet/world.json', import.meta.url),
@@ -192,6 +185,38 @@ export async function readBalance(
   const rv = res.commandResults[0]?.returnValues[0]
   if (!rv) throw new Error('balance_of returned no value')
   return BigInt(bcs.u64().parse(rv.bcs))
+}
+
+/** True if `itemId` is stored in the inventory routed to `authorizedId`. */
+export async function readHasSingleton(
+  client: WorldClient,
+  config: WorldConfig,
+  args: {
+    entity: string
+    moduleId: bigint
+    authorizedId: string
+    itemId: bigint
+  },
+): Promise<boolean> {
+  const tx = new Transaction()
+  tx.setSender(signer)
+  hasSingleton(tx, config, tx.object(args.entity), {
+    moduleId: args.moduleId,
+    authorizedId: args.authorizedId,
+    itemId: args.itemId,
+  })
+  const res = await client.simulateTransaction({
+    transaction: tx,
+    include: { commandResults: true },
+  })
+  if (res.FailedTransaction) {
+    throw new Error(
+      `has_singleton simulation failed: ${res.FailedTransaction.status.error?.message ?? ''}`,
+    )
+  }
+  const rv = res.commandResults[0]?.returnValues[0]
+  if (!rv) throw new Error('has_singleton returned no value')
+  return bcs.bool().parse(rv.bcs)
 }
 
 /** Current object ref (id, version, digest) — for building a receiving arg. */

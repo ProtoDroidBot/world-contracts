@@ -31,6 +31,7 @@ function pkg(config: WorldConfig): string {
 
 export interface ItemRule {
   typeId?: bigint | null
+  itemId?: bigint | null
   minQuantity?: bigint | null
   maxQuantity?: bigint | null
 }
@@ -47,6 +48,7 @@ function requirement(
     arguments: [
       tx.pure.u64(componentId),
       tx.pure.option('u64', rule.typeId ?? null),
+      tx.pure.option('u64', rule.itemId ?? null),
       tx.pure.option('u64', rule.minQuantity ?? null),
       tx.pure.option('u64', rule.maxQuantity ?? null),
     ],
@@ -197,6 +199,12 @@ export interface BalanceOfArgs {
   key: VariantKeyInput
 }
 
+export interface HasSingletonArgs {
+  moduleId: bigint
+  authorizedId: string
+  itemId: bigint
+}
+
 /**
  * Read the balance of variant `key` (base units) in the entity's inventory. Read-only; run under
  * `simulateTransaction` and decode the returned `u64`.
@@ -217,14 +225,36 @@ export function balanceOf(
   })
 }
 
-export interface BridgeInArgs {
-  /** The frozen `Variant` record's object ID (see `deriveVariantId`). */
-  variant: string | TransactionArgument
-  /** Base units: items, or 1e-9 kg (whole 0.0001 kg) for mass. */
-  quantity: bigint
+/**
+ * True if `itemId` is stored in the inventory routed to `authorizedId`.
+ * Read-only; run under `simulateTransaction` and decode the returned `bool`.
+ * False if that inventory does not exist yet.
+ */
+export function hasSingleton(
+  tx: Transaction,
+  config: WorldConfig,
+  entity: TransactionArgument,
+  args: HasSingletonArgs,
+): TransactionResult {
+  return tx.moveCall({
+    target: `${pkg(config)}::inventory::has_singleton`,
+    arguments: [
+      entity,
+      tx.pure.u64(args.moduleId),
+      tx.pure.address(args.authorizedId),
+      tx.pure.u64(args.itemId),
+    ],
+  })
 }
 
-/** Game-to-chain bridge: mint a balance of the variant. The variant must be in the entity's tenant. Then checks the sponsor and the inventory's grant. */
+export interface BridgeInArgs {
+  typeId: bigint
+  itemId?: bigint | null
+  quantity?: bigint | null
+  volume: bigint
+}
+
+/** Game-to-chain bridge: mint into the caller's routed inventory. */
 export function gameItemToChain(
   tx: Transaction,
   config: WorldConfig,
@@ -237,8 +267,10 @@ export function gameItemToChain(
     arguments: [
       entity,
       request,
-      typeof args.variant === 'string' ? tx.object(args.variant) : args.variant,
-      tx.pure.u64(args.quantity),
+      tx.pure.u64(args.typeId),
+      tx.pure.option('u64', args.itemId ?? null),
+      tx.pure.option('u64', args.quantity ?? null),
+      tx.pure.u64(args.volume),
     ],
   })
   verifySponsor(tx, config, request)
@@ -246,12 +278,12 @@ export function gameItemToChain(
 }
 
 export interface ItemAmount {
-  key: VariantKeyInput
-  /** Base units: items, or 1e-9 kg (whole 0.0001 kg) for mass. */
-  quantity: bigint
+  typeId: bigint
+  itemId?: bigint | null
+  quantity?: bigint | null
 }
 
-/** Chain-to-game bridge: burn a balance. Then checks the sponsor and the inventory's grant. */
+/** Chain-to-game bridge: burn from the caller's routed inventory. */
 export function chainItemToGame(
   tx: Transaction,
   config: WorldConfig,
@@ -264,8 +296,9 @@ export function chainItemToGame(
     arguments: [
       entity,
       request,
-      variantKey(tx, config, args.key),
-      tx.pure.u64(args.quantity),
+      tx.pure.u64(args.typeId),
+      tx.pure.option('u64', args.itemId ?? null),
+      tx.pure.option('u64', args.quantity ?? null),
     ],
   })
   verifySponsor(tx, config, request)
@@ -290,10 +323,7 @@ export function deposit(
   assertOnline(tx, config, entity, request)
 }
 
-/**
- * Withdraw a balance as a fresh `Item`. No docking check: `deposit` checks the item's
- * source. Then checks the inventory's grant.
- */
+/** Withdraw from the caller's routed inventory as a fresh `Item`. */
 export function withdraw(
   tx: Transaction,
   config: WorldConfig,
@@ -306,8 +336,9 @@ export function withdraw(
     arguments: [
       entity,
       request,
-      variantKey(tx, config, args.key),
-      tx.pure.u64(args.quantity),
+      tx.pure.u64(args.typeId),
+      tx.pure.option('u64', args.itemId ?? null),
+      tx.pure.option('u64', args.quantity ?? null),
     ],
   })
   assertOnline(tx, config, entity, request)
